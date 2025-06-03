@@ -1,3 +1,21 @@
+#!/bin/bash
+# Script completo para corregir API Gateway
+
+echo "=== Corrigiendo API Gateway ==="
+
+# 1. Debug inicial
+echo "1. Estado actual:"
+./debug_api_gateway.sh
+
+echo ""
+echo "2. Parando API Gateway..."
+sudo systemctl stop pucp-api-gateway
+sudo pkill -f "wsgi:app"
+sleep 3
+
+# 3. Crear versión corregida del API Gateway
+echo "3. Creando API Gateway corregido..."
+cat > /opt/pucp-orchestrator/api_gateway_fixed.py << 'EOF'
 #!/usr/bin/env python3
 """
 PUCP Private Cloud Orchestrator - API Gateway (FIXED)
@@ -292,3 +310,49 @@ if __name__ == '__main__':
     # Initialize and run the API Gateway
     gateway = APIGateway()
     gateway.run(debug=True)
+EOF
+
+# 4. Reemplazar API Gateway
+echo "4. Reemplazando API Gateway..."
+cp /opt/pucp-orchestrator/api_gateway.py /opt/pucp-orchestrator/api_gateway_backup_$(date +%s).py
+cp /opt/pucp-orchestrator/api_gateway_fixed.py /opt/pucp-orchestrator/api_gateway.py
+
+# 5. Reiniciar API Gateway
+echo "5. Reiniciando API Gateway..."
+cd /opt/pucp-orchestrator
+source venv/bin/activate
+
+# Matar procesos existentes
+sudo pkill -f "gunicorn.*wsgi"
+sleep 3
+
+# Iniciar en modo debug para ver errores
+echo "Iniciando API Gateway en modo debug..."
+python3 api_gateway.py &
+GATEWAY_PID=$!
+echo "API Gateway iniciado con PID: $GATEWAY_PID"
+
+# 6. Esperar y probar
+echo "6. Esperando que esté listo..."
+sleep 5
+
+echo "7. Test del API Gateway corregido:"
+echo "Health check en puerto 5000:"
+curl -s http://localhost:5000/health | python3 -m json.tool
+
+echo ""
+echo "Login directo en puerto 5000:"
+curl -s -X POST http://localhost:5000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "testuser", "password": "testpass123"}' | python3 -m json.tool
+
+echo ""
+echo "Login a través de nginx (puerto 80):"
+curl -s -X POST http://localhost/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "testuser", "password": "testpass123"}' | python3 -m json.tool
+
+echo ""
+echo "=== API Gateway corregido ==="
+echo "PID: $GATEWAY_PID"
+echo "Para parar: kill $GATEWAY_PID"

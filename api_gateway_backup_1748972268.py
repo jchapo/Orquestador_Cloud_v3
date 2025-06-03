@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-PUCP Private Cloud Orchestrator - API Gateway (FIXED)
+PUCP Private Cloud Orchestrator - API Gateway
 Main entry point for all client requests to the cloud orchestrator system.
 """
 
@@ -104,91 +104,39 @@ class APIGateway:
         return decorated_function
     
     def proxy_request(self, service_url: str, path: str):
-        """Proxy request to appropriate microservice - FIXED VERSION"""
+        """Proxy request to appropriate microservice"""
         try:
-            # Preparar URL objetivo
-            if path.startswith('/'):
-                target_url = f"{service_url}{path}"
-            else:
-                target_url = f"{service_url}/{path}"
-                
-            # Preparar headers
-            headers = {'Content-Type': 'application/json'}
+            # Prepare request
+            target_url = f"{service_url}{path}"
+            headers = dict(request.headers)
+            headers['X-Request-ID'] = g.request_id
             
-            # Agregar headers de contexto
-            headers['X-Request-ID'] = g.request_id if hasattr(g, 'request_id') else str(uuid.uuid4())
-            
-            # Agregar contexto de usuario si está autenticado
+            # Add user context if authenticated
             if hasattr(g, 'user'):
-                headers['X-User-ID'] = str(g.user.get('user_id', ''))
+                headers['X-User-ID'] = str(g.user.get('user_id'))
                 headers['X-User-Role'] = g.user.get('role', 'user')
             
-            # Log para debug
-            logger.info(f"Proxying {request.method} to {target_url}")
-            
-            # Realizar request según método
-            timeout = 30
-            
+            # Forward request
             if request.method == 'GET':
-                response = requests.get(
-                    target_url, 
-                    params=request.args, 
-                    headers=headers,
-                    timeout=timeout
-                )
+                response = requests.get(target_url, params=request.args, headers=headers)
             elif request.method == 'POST':
-                json_data = request.get_json() if request.is_json else None
-                logger.info(f"POST data: {json_data}")
-                
-                response = requests.post(
-                    target_url,
-                    json=json_data,
-                    headers=headers,
-                    timeout=timeout
-                )
+                response = requests.post(target_url, json=request.get_json(), headers=headers)
             elif request.method == 'PUT':
-                json_data = request.get_json() if request.is_json else None
-                response = requests.put(
-                    target_url,
-                    json=json_data,
-                    headers=headers,
-                    timeout=timeout
-                )
+                response = requests.put(target_url, json=request.get_json(), headers=headers)
             elif request.method == 'DELETE':
-                response = requests.delete(
-                    target_url,
-                    headers=headers,
-                    timeout=timeout
-                )
+                response = requests.delete(target_url, headers=headers)
             else:
                 return jsonify({'error': 'Method not allowed'}), 405
             
-            # Log response para debug
-            logger.info(f"Response status: {response.status_code}")
-            logger.info(f"Response content: {response.text[:200]}")
-            
-            # Intentar parsear como JSON
-            try:
-                return response.json(), response.status_code
-            except ValueError:
-                # Si no es JSON válido, devolver error
-                logger.error(f"Non-JSON response: {response.text}")
-                return jsonify({
-                    'error': 'Service returned invalid response',
-                    'status_code': response.status_code,
-                    'response': response.text[:200]
-                }), 502
+            # Return response
+            return response.json(), response.status_code
             
         except requests.exceptions.ConnectionError:
             logger.error(f"Service unavailable: {service_url}")
-            return jsonify({'error': f'Service unavailable: {service_url}'}), 503
-        except requests.exceptions.Timeout:
-            logger.error(f"Service timeout: {service_url}")
-            return jsonify({'error': 'Service timeout'}), 504
+            return jsonify({'error': 'Service temporarily unavailable'}), 503
         except Exception as e:
             logger.error(f"Proxy error: {str(e)}")
-            logger.error(traceback.format_exc())
-            return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+            return jsonify({'error': 'Internal server error'}), 500
     
     def setup_routes(self):
         """Setup API routes"""
@@ -206,13 +154,11 @@ class APIGateway:
         @self.app.route('/api/auth/login', methods=['POST'])
         def login():
             """Authentication endpoint (doesn't require auth)"""
-            logger.info("Login request received through API Gateway")
             return self.proxy_request(self.config['AUTH_SERVICE_URL'], '/login')
         
         @self.app.route('/api/auth/register', methods=['POST'])
         def register():
             """User registration endpoint"""
-            logger.info("Register request received through API Gateway")
             return self.proxy_request(self.config['AUTH_SERVICE_URL'], '/register')
         
         # Protected endpoints
@@ -240,10 +186,22 @@ class APIGateway:
             """Template management"""
             return self.proxy_request(self.config['TEMPLATE_SERVICE_URL'], request.path)
         
+        @self.app.route('/api/templates/<template_id>', methods=['GET', 'PUT', 'DELETE'])
+        @self.require_auth
+        def template_detail(template_id):
+            """Individual template operations"""
+            return self.proxy_request(self.config['TEMPLATE_SERVICE_URL'], request.path)
+        
         @self.app.route('/api/networks', methods=['GET', 'POST'])
         @self.require_auth
         def networks():
             """Network management"""
+            return self.proxy_request(self.config['NETWORK_SERVICE_URL'], request.path)
+        
+        @self.app.route('/api/networks/<network_id>', methods=['GET', 'PUT', 'DELETE'])
+        @self.require_auth
+        def network_detail(network_id):
+            """Individual network operations"""
             return self.proxy_request(self.config['NETWORK_SERVICE_URL'], request.path)
         
         @self.app.route('/api/images', methods=['GET', 'POST'])
@@ -252,11 +210,18 @@ class APIGateway:
             """Image management"""
             return self.proxy_request(self.config['IMAGE_SERVICE_URL'], request.path)
         
+        @self.app.route('/api/images/<image_id>', methods=['GET', 'DELETE'])
+        @self.require_auth
+        def image_detail(image_id):
+            """Individual image operations"""
+            return self.proxy_request(self.config['IMAGE_SERVICE_URL'], request.path)
+        
         @self.app.route('/api/resources', methods=['GET'])
         @self.require_auth
         def resources():
             """Get system resources status"""
-            return self.proxy_request(self.config['SLICE_SERVICE_URL'], '/api/resources')
+            # This could aggregate data from multiple services
+            return self.proxy_request(self.config['SLICE_SERVICE_URL'], '/resources')
         
         # Error handlers
         @self.app.errorhandler(400)

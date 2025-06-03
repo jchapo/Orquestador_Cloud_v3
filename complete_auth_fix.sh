@@ -1,3 +1,35 @@
+#!/bin/bash
+# Solución completa para Auth Service
+
+echo "=== Solución Completa Auth Service ==="
+
+# 1. Matar TODOS los procesos relacionados
+echo "1. Matando todos los procesos auth service..."
+sudo pkill -f "auth_service"
+sudo pkill -f "5001"
+sleep 3
+
+# 2. Verificar qué proceso está usando el puerto 5001
+echo "2. Verificando qué usa el puerto 5001..."
+sudo lsof -i :5001 || echo "Puerto 5001 libre"
+
+# 3. Forzar liberación del puerto si es necesario
+echo "3. Liberando puerto 5001..."
+sudo fuser -k 5001/tcp 2>/dev/null || echo "Puerto ya libre"
+sleep 2
+
+# 4. Verificar el esquema actual de la base de datos
+echo "4. Verificando esquema actual de la base de datos..."
+sqlite3 /opt/pucp-orchestrator/auth_service/auth_service.db ".schema users" 2>/dev/null || echo "Tabla users no existe"
+
+# 5. Recrear la base de datos desde cero
+echo "5. Recreando base de datos desde cero..."
+rm -f /opt/pucp-orchestrator/auth_service/auth_service.db
+rm -f /opt/pucp-orchestrator/auth_service/auth_service.db-journal
+
+# 6. Crear auth service que funcione con el esquema correcto
+echo "6. Creando auth service compatible..."
+cat > /opt/pucp-orchestrator/auth_service/auth_service_working.py << 'EOF'
 #!/usr/bin/env python3
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
@@ -187,3 +219,71 @@ if __name__ == '__main__':
     init_db()
     logger.info("Starting Auth Service on port 5001...")
     app.run(host='0.0.0.0', port=5001, debug=False)
+EOF
+
+# 7. Reemplazar el auth service actual
+echo "7. Reemplazando auth service..."
+cp /opt/pucp-orchestrator/auth_service/auth_service.py /opt/pucp-orchestrator/auth_service/auth_service_backup_$(date +%s).py
+cp /opt/pucp-orchestrator/auth_service/auth_service_working.py /opt/pucp-orchestrator/auth_service/auth_service.py
+
+# 8. Inicializar la nueva base de datos
+echo "8. Inicializando nueva base de datos..."
+cd /opt/pucp-orchestrator/auth_service
+source /opt/pucp-orchestrator/venv/bin/activate
+
+python3 << 'EOF'
+import sys
+sys.path.append('/opt/pucp-orchestrator/auth_service')
+from auth_service import init_db
+try:
+    init_db()
+    print("✓ Base de datos inicializada correctamente")
+except Exception as e:
+    print(f"✗ Error inicializando DB: {e}")
+EOF
+
+# 9. Verificar la nueva base de datos
+echo "9. Verificando nueva base de datos..."
+sqlite3 /opt/pucp-orchestrator/auth_service/auth_service.db ".schema users"
+echo ""
+echo "Usuarios creados:"
+sqlite3 /opt/pucp-orchestrator/auth_service/auth_service.db "SELECT username, email, role FROM users;"
+
+# 10. Iniciar el auth service en background
+echo "10. Iniciando auth service..."
+cd /opt/pucp-orchestrator/auth_service
+nohup python3 auth_service.py > auth_service.log 2>&1 &
+AUTH_PID=$!
+echo "Auth service iniciado con PID: $AUTH_PID"
+
+# 11. Esperar que esté listo
+echo "11. Esperando que el servicio esté listo..."
+for i in {1..10}; do
+    if curl -s http://localhost:5001/health > /dev/null; then
+        echo "✓ Auth service responde"
+        break
+    fi
+    echo "Esperando... ($i/10)"
+    sleep 2
+done
+
+# 12. Test directo del auth service
+echo "12. Probando auth service directamente..."
+echo "Health check:"
+curl -s http://localhost:5001/health | python3 -m json.tool
+
+echo ""
+echo "Test de login:"
+curl -s -X POST http://localhost:5001/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "testuser", "password": "testpass123"}' | python3 -m json.tool
+
+echo ""
+echo "13. Guardando PID para cleanup..."
+echo $AUTH_PID > /tmp/auth_service.pid
+
+echo ""
+echo "=== Auth Service funcionando ==="
+echo "PID: $AUTH_PID"
+echo "Log: /opt/pucp-orchestrator/auth_service/auth_service.log"
+echo "Para parar: kill $AUTH_PID"
