@@ -65,3 +65,18 @@ nohup: ignoring input
 2025-06-04 00:10:17,829 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
 2025-06-04 00:10:17,841 - werkzeug - WARNING -  * Debugger is active!
 2025-06-04 00:10:17,842 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-04 00:33:48,442 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/template_service/template_service.py', reloading
+2025-06-04 00:33:48,500 - werkzeug - INFO -  * Restarting with stat
+2025-06-04 00:33:48,810 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-04 00:33:48,822 - werkzeug - WARNING -  * Debugger is active!
+2025-06-04 00:33:48,823 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-04 00:38:39,860 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/template_service/template_service.py', reloading
+2025-06-04 00:38:39,920 - werkzeug - INFO -  * Restarting with stat
+2025-06-04 00:38:40,225 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-04 00:38:40,236 - werkzeug - WARNING -  * Debugger is active!
+2025-06-04 00:38:40,237 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-04 00:41:21,361 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/template_service/template_service.py', reloading
+2025-06-04 00:41:21,418 - werkzeug - INFO -  * Restarting with stat
+2025-06-04 00:41:21,728 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-04 00:41:21,739 - werkzeug - WARNING -  * Debugger is active!
+2025-06-04 00:41:21,740 - werkzeug - INFO -  * Debugger PIN: 671-258-960

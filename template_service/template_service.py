@@ -6,6 +6,8 @@ import os
 import json
 from functools import wraps
 import jwt
+from advanced_topology_generator import AdvancedTopologyGenerator, TopologyType, FlavorManager
+import uuid
 
 
 app = Flask(__name__)
@@ -16,24 +18,46 @@ app.config['DATABASE'] = 'template_service.db'
 
 # Topologías predefinidas
 PREDEFINED_TEMPLATES = {
-    'linear-3-nodes': {
+    'linear-3': {
+        'id': 'linear-3',
         'name': 'Linear 3 Nodes',
         'description': 'Three nodes connected in linear topology',
-        'nodes': [
-            {'name': 'node1', 'image': 'ubuntu-20.04', 'flavor': 'small'},
-            {'name': 'node2', 'image': 'ubuntu-20.04', 'flavor': 'small'},
-            {'name': 'node3', 'image': 'ubuntu-20.04', 'flavor': 'small'}
-        ],
-        'networks': [
-            {'name': 'net1', 'cidr': '192.168.1.0/24'},
-            {'name': 'net2', 'cidr': '192.168.2.0/24'}
-        ],
-        'connections': [
-            {'source': 'node1', 'target': 'node2', 'network': 'net1'},
-            {'source': 'node2', 'target': 'node3', 'network': 'net2'}
-        ]
+        'type': 'linear',
+        'node_count': 3,
+        'default_flavor': 'small'
     },
-    # Agregar más topologías según sea necesario
+    'linear-5': {
+        'id': 'linear-5', 
+        'name': 'Linear 5 Nodes',
+        'description': 'Five nodes connected in linear topology',
+        'type': 'linear',
+        'node_count': 5,
+        'default_flavor': 'small'
+    },
+    'ring-4': {
+        'id': 'ring-4',
+        'name': 'Ring 4 Nodes',
+        'description': 'Four nodes connected in ring topology',
+        'type': 'ring', 
+        'node_count': 4,
+        'default_flavor': 'small'
+    },
+    'star-5': {
+        'id': 'star-5',
+        'name': 'Star 5 Nodes', 
+        'description': 'Five nodes in star topology',
+        'type': 'star',
+        'node_count': 5,
+        'default_flavor': 'small'
+    },
+    'mesh-4': {
+        'id': 'mesh-4',
+        'name': 'Mesh 4 Nodes',
+        'description': 'Four nodes in full mesh topology', 
+        'type': 'mesh',
+        'node_count': 4,
+        'default_flavor': 'medium'
+    }
 }
 
 def get_db():
@@ -50,9 +74,13 @@ def init_db():
                 user_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 description TEXT,
+                topology_type TEXT NOT NULL,
+                node_count INTEGER DEFAULT 3,
+                infrastructure TEXT DEFAULT 'linux',
                 definition TEXT NOT NULL,
                 is_public BOOLEAN DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         db.commit()
@@ -75,29 +103,43 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
+
 @app.route('/api/templates', methods=['GET'])
 @token_required
 def list_templates():
     db = get_db()
     
-    # Plantillas predefinidas
-    predefined = [{
-        'id': key,
-        'name': value['name'],
-        'description': value['description'],
-        'is_predefined': True
-    } for key, value in PREDEFINED_TEMPLATES.items()]
+    # Plantillas predefinidas con información extendida
+    predefined = []
+    for key, template in PREDEFINED_TEMPLATES.items():
+        predefined.append({
+            'id': key,
+            'name': template['name'],
+            'description': template['description'],
+            'topology_type': template['type'],
+            'node_count': template['node_count'],
+            'is_predefined': True
+        })
     
     # Plantillas personalizadas
     custom = db.execute('''
-        SELECT id, name, description, is_public 
+        SELECT id, name, description, topology_type, node_count, is_public 
         FROM templates 
         WHERE user_id = ? OR is_public = 1
+        ORDER BY created_at DESC
     ''', (g.current_user['username'],)).fetchall()
     
     return jsonify({
         'predefined': predefined,
-        'custom': [dict(template) for template in custom]
+        'custom': [dict(template) for template in custom],
+        'topology_types': [
+            {'type': 'linear', 'name': 'Linear', 'min_nodes': 2},
+            {'type': 'ring', 'name': 'Ring', 'min_nodes': 3}, 
+            {'type': 'star', 'name': 'Star', 'min_nodes': 2},
+            {'type': 'mesh', 'name': 'Mesh', 'min_nodes': 2},
+            {'type': 'custom', 'name': 'Custom', 'min_nodes': 1}
+        ],
+        'available_flavors': FlavorManager.list_flavors()
     })
 
 @app.route('/api/templates', methods=['POST'])
@@ -129,13 +171,132 @@ def create_template():
     
     return jsonify({'id': template_id, 'message': 'Template created successfully'}), 201
 
+@app.route('/api/templates/generate', methods=['POST'])
+@token_required 
+def generate_template():
+    """Genera una topología dinámicamente"""
+    data = request.get_json()
+    
+    required = ['topology_type', 'node_count']
+    if not all(field in data for field in required):
+        return jsonify({'error': 'Missing required fields: topology_type, node_count'}), 400
+    
+    topology_type = data['topology_type']
+    node_count = int(data['node_count'])
+    flavor = data.get('flavor', 'small')
+    infrastructure = data.get('infrastructure', 'linux')
+    enable_internet = data.get('enable_internet', False)
+    internet_vms = data.get('internet_vms', [])
+    
+    try:
+        # Generar topología usando AdvancedTopologyGenerator
+        if topology_type == 'linear':
+            topology = topology_generator.create_linear_topology(
+                node_count, flavor, 1, enable_internet, internet_vms)
+        elif topology_type == 'ring':
+            if node_count < 3:
+                return jsonify({'error': 'Ring topology requires at least 3 nodes'}), 400
+            topology = topology_generator.create_ring_topology(
+                node_count, flavor, 1, enable_internet, internet_vms)
+        elif topology_type == 'star':
+            topology = topology_generator.create_star_topology(
+                node_count, flavor, 1, enable_internet, internet_vms)
+        elif topology_type == 'mesh':
+            topology = topology_generator.create_mesh_topology(
+                node_count, flavor, 1, enable_internet, internet_vms)
+        else:
+            return jsonify({'error': f'Unsupported topology type: {topology_type}'}), 400
+        
+        # Ajustar infraestructura
+        topology['infrastructure'] = infrastructure
+        
+        return jsonify({
+            'topology': topology,
+            'slice_format': topology_generator.convert_to_slice_format(topology)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/templates/types', methods=['GET'])
+@token_required
+def get_topology_types():
+    """Lista tipos de topología disponibles"""
+    return jsonify({
+        'types': [
+            {
+                'id': 'linear',
+                'name': 'Linear',
+                'description': 'Nodes connected in a line',
+                'min_nodes': 2,
+                'max_nodes': 20
+            },
+            {
+                'id': 'ring', 
+                'name': 'Ring',
+                'description': 'Nodes connected in a circle',
+                'min_nodes': 3,
+                'max_nodes': 15
+            },
+            {
+                'id': 'star',
+                'name': 'Star', 
+                'description': 'Central node connected to all others',
+                'min_nodes': 2,
+                'max_nodes': 10
+            },
+            {
+                'id': 'mesh',
+                'name': 'Mesh',
+                'description': 'All nodes connected to all others', 
+                'min_nodes': 2,
+                'max_nodes': 8
+            }
+        ],
+        'flavors': FlavorManager.DEFAULT_FLAVORS,
+        'infrastructures': ['linux', 'openstack']
+    })
+
 @app.route('/api/templates/<template_id>', methods=['GET'])
 @token_required
 def get_template(template_id):
     # Verificar si es predefinido
     if template_id in PREDEFINED_TEMPLATES:
-        return jsonify(PREDEFINED_TEMPLATES[template_id])
-    
+        template_config = PREDEFINED_TEMPLATES[template_id]
+        
+        # Generar topología predefinida dinámicamente
+        try:
+            if template_config['type'] == 'linear':
+                topology = topology_generator.create_linear_topology(
+                    template_config['node_count'], 
+                    template_config['default_flavor'])
+            elif template_config['type'] == 'ring':
+                topology = topology_generator.create_ring_topology(
+                    template_config['node_count'],
+                    template_config['default_flavor'])
+            elif template_config['type'] == 'star':
+                topology = topology_generator.create_star_topology(
+                    template_config['node_count'],
+                    template_config['default_flavor'])
+            elif template_config['type'] == 'mesh':
+                topology = topology_generator.create_mesh_topology(
+                    template_config['node_count'],
+                    template_config['default_flavor'])
+            
+            return jsonify({
+                'id': template_id,
+                'name': template_config['name'],
+                'description': template_config['description'],
+                'topology_type': template_config['type'],
+                'node_count': template_config['node_count'],
+                'is_predefined': True,
+                'topology': topology,
+                'slice_format': topology_generator.convert_to_slice_format(topology)
+            })
+            
+        except Exception as e:
+            return jsonify({'error': f'Error generating predefined topology: {str(e)}'}), 500
+   
     # Buscar en templates personalizados
     db = get_db()
     template = db.execute('''
@@ -154,6 +315,8 @@ def get_template(template_id):
 @app.route('/health', methods=['GET'])
 def health():
     return jsonify({'status': 'healthy', 'service': 'template'})
+
+
 
 if __name__ == '__main__':
     init_db()
