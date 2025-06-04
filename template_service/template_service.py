@@ -103,6 +103,8 @@ def token_required(f):
         return f(*args, **kwargs)
     return decorated
 
+# Inicializar generador
+topology_generator = AdvancedTopologyGenerator()
 
 @app.route('/api/templates', methods=['GET'])
 @token_required
