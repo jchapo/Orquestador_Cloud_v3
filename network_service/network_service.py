@@ -17,6 +17,8 @@ from functools import wraps
 from typing import Dict, List, Any, Optional
 import jwt
 import ipaddress
+from .vlan_manager import VLANManager, VLANState
+
 
 # Configurar logging
 logging.basicConfig(
@@ -165,6 +167,27 @@ def init_db():
                 FOREIGN KEY (network_id) REFERENCES networks (id)
             )
         ''')
+
+        # Tabla de pool de VLANs (NUEVA)
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS vlan_pool (
+                vlan_id INTEGER NOT NULL,
+                infrastructure TEXT NOT NULL,
+                state TEXT NOT NULL DEFAULT 'available' CHECK (state IN ('available', 'allocated', 'reserved', 'error')),
+                network_id TEXT,
+                slice_id TEXT,
+                usage_description TEXT,
+                assigned_at TIMESTAMP,
+                released_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (vlan_id, infrastructure)
+            )
+        ''')
+        
+        # Índices para optimización
+        db.execute('CREATE INDEX IF NOT EXISTS idx_vlan_pool_state ON vlan_pool(infrastructure, state)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_vlan_pool_network ON vlan_pool(network_id)')
+        db.execute('CREATE INDEX IF NOT EXISTS idx_vlan_pool_slice ON vlan_pool(slice_id)')
         
         db.commit()
         
@@ -236,7 +259,7 @@ def validate_cidr(cidr_str):
     except ValueError as e:
         return False, str(e)
 
-def get_next_available_vlan(infrastructure: str, db) -> Optional[int]:
+""" def get_next_available_vlan(infrastructure: str, db) -> Optional[int]:
     """Obtiene siguiente VLAN disponible"""
     available = db.execute('''
         SELECT vlan_id FROM vlan_assignments 
@@ -253,7 +276,27 @@ def allocate_vlan(vlan_id: int, network_id: str, db):
         UPDATE vlan_assignments 
         SET network_id = ?, assigned_at = CURRENT_TIMESTAMP
         WHERE vlan_id = ?
-    ''', (network_id, vlan_id))
+    ''', (network_id, vlan_id)) """
+
+def get_vlan_manager(db):
+    """Obtiene una instancia del VLAN Manager"""
+    return VLANManager(db)
+
+def get_next_available_vlan(infrastructure: str, db) -> Optional[int]:
+    """
+    Función de compatibilidad - usa el nuevo VLANManager
+    """
+    vlan_manager = get_vlan_manager(db)
+    # Para compatibilidad, asignamos una red temporal
+    temp_network_id = f"temp_{datetime.datetime.utcnow().timestamp()}"
+    return vlan_manager.allocate_vlan(infrastructure, temp_network_id)
+
+def release_vlan_old(network_id: str, db):
+    """
+    Función de compatibilidad - usa el nuevo VLANManager  
+    """
+    vlan_manager = get_vlan_manager(db)
+    return vlan_manager.release_vlan_by_network(network_id)
 
 def release_vlan(network_id: str, db):
     """Libera VLAN de una red"""
@@ -489,21 +532,57 @@ def create_network():
         db = get_db()
         
         try:
-            # Obtener VLAN automáticamente si no se especifica
+            # Inicializar VLAN Manager
+            vlan_manager = get_vlan_manager(db)
+            
+            # Obtener VLAN del pool o validar la proporcionada
             vlan_id = data.get('vlan_id')
             if not vlan_id:
-                vlan_id = get_next_available_vlan(data['infrastructure'], db)
-                if not vlan_id:
-                    return jsonify({'error': f'No available VLANs for {data["infrastructure"]}'}), 400
-            else:
-                # Verificar que la VLAN esté disponible
-                existing_vlan = db.execute('''
-                    SELECT network_id FROM vlan_assignments 
-                    WHERE vlan_id = ? AND infrastructure = ?
-                ''', (vlan_id, data['infrastructure'])).fetchone()
+                # Asignar VLAN automáticamente del pool
+                vlan_id = vlan_manager.allocate_vlan(
+                    infrastructure=data['infrastructure'],
+                    network_id=network_id,
+                    slice_id=data.get('slice_id'),
+                    description=f"Network: {data['name']}"
+                )
                 
-                if existing_vlan and existing_vlan['network_id']:
-                    return jsonify({'error': f'VLAN {vlan_id} already in use'}), 409
+                if not vlan_id:
+                    return jsonify({
+                        'success': False,
+                        'error': f'No available VLANs in {data["infrastructure"]} pool',
+                        'timestamp': datetime.datetime.utcnow().isoformat()
+                    }), 400
+            else:
+                # Validar que la VLAN proporcionada esté disponible
+                vlan_info = vlan_manager.get_vlan_info(vlan_id, data['infrastructure'])
+                if not vlan_info:
+                    return jsonify({
+                        'success': False,
+                        'error': f'VLAN {vlan_id} not found in {data["infrastructure"]} pool',
+                        'timestamp': datetime.datetime.utcnow().isoformat()
+                    }), 400
+                
+                if vlan_info['state'] != VLANState.AVAILABLE.value:
+                    return jsonify({
+                        'success': False,
+                        'error': f'VLAN {vlan_id} is not available (state: {vlan_info["state"]})',
+                        'timestamp': datetime.datetime.utcnow().isoformat()
+                    }), 409
+                
+                # Asignar la VLAN específica
+                assigned_vlan = vlan_manager.allocate_vlan(
+                    infrastructure=data['infrastructure'],
+                    network_id=network_id,
+                    slice_id=data.get('slice_id'),
+                    description=f"Network: {data['name']} (user specified)"
+                )
+                
+                if not assigned_vlan or assigned_vlan != vlan_id:
+                    return jsonify({
+                        'success': False,
+                        'error': f'Failed to allocate VLAN {vlan_id}',
+                        'timestamp': datetime.datetime.utcnow().isoformat()
+                    }), 500
             
             # Calcular gateway si no se proporciona
             gateway = data.get('gateway')
@@ -675,8 +754,14 @@ def delete_network(network_id):
                     controller = OpenFlowController(app.config['OPENFLOW_CONTROLLER_URL'])
                     controller.delete_network_flows(switch['id'], vlan_assignment['vlan_id'])
             
-            # Liberar VLAN
-            release_vlan(network_id, db)
+            # Liberar VLAN usando VLAN Manager
+            vlan_manager = get_vlan_manager(db)
+            vlan_released = vlan_manager.release_vlan_by_network(network_id)
+            
+            if vlan_released:
+                logger.info(f"VLAN released for network {network_id}")
+            else:
+                logger.warning(f"Failed to release VLAN for network {network_id}")
             
             # Eliminar reglas de seguridad
             db.execute('DELETE FROM security_rules WHERE network_id = ?', (network_id,))
@@ -849,6 +934,192 @@ def list_switches():
     except Exception as e:
         logger.error(f"List switches error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/api/vlans/status', methods=['GET'])
+@token_required
+def get_vlan_status():
+    """Obtiene estadísticas de pools de VLANs"""
+    try:
+        db = get_db()
+        vlan_manager = get_vlan_manager(db)
+        
+        infrastructure = request.args.get('infrastructure')
+        status = vlan_manager.get_pool_status(infrastructure)
+        
+        return jsonify({
+            'success': True,
+            'data': status,
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Get VLAN status error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error',
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        }), 500
+
+@app.route('/api/vlans/allocated', methods=['GET'])
+@token_required
+def get_allocated_vlans():
+    """Lista VLANs asignadas"""
+    try:
+        db = get_db()
+        vlan_manager = get_vlan_manager(db)
+        
+        infrastructure = request.args.get('infrastructure')
+        slice_id = request.args.get('slice_id')
+        
+        allocated_vlans = vlan_manager.get_allocated_vlans(infrastructure, slice_id)
+        
+        return jsonify({
+            'success': True,
+            'data': allocated_vlans,
+            'count': len(allocated_vlans),
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Get allocated VLANs error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error',
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        }), 500
+
+@app.route('/api/vlans/<int:vlan_id>/release', methods=['POST'])
+@token_required
+def release_vlan_manual(vlan_id):
+    """Libera manualmente una VLAN específica"""
+    try:
+        data = request.get_json()
+        if not data or 'infrastructure' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Infrastructure is required',
+                'timestamp': datetime.datetime.utcnow().isoformat()
+            }), 400
+        
+        db = get_db()
+        vlan_manager = get_vlan_manager(db)
+        
+        # Verificar permisos - solo admin puede liberar VLANs manualmente
+        if 'manage_vlans' not in g.current_user.get('permissions', []):
+            return jsonify({
+                'success': False,
+                'error': 'Insufficient permissions',
+                'timestamp': datetime.datetime.utcnow().isoformat()
+            }), 403
+        
+        success = vlan_manager.release_vlan(vlan_id, data['infrastructure'])
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'VLAN {vlan_id} released successfully',
+                'timestamp': datetime.datetime.utcnow().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Failed to release VLAN {vlan_id}',
+                'timestamp': datetime.datetime.utcnow().isoformat()
+            }), 400
+        
+    except Exception as e:
+        logger.error(f"Release VLAN error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error',
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        }), 500
+
+@app.route('/api/vlans/slice/<slice_id>/release', methods=['POST'])
+@token_required
+def release_slice_vlans(slice_id):
+    """Libera todas las VLANs de un slice"""
+    try:
+        db = get_db()
+        vlan_manager = get_vlan_manager(db)
+        
+        released_count = vlan_manager.release_slice_vlans(slice_id)
+        
+        return jsonify({
+            'success': True,
+            'message': f'{released_count} VLANs released for slice {slice_id}',
+            'released_count': released_count,
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"Release slice VLANs error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error',
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        }), 500
+
+@app.route('/api/vlans/reserve', methods=['POST'])
+@token_required
+def reserve_vlan_range():
+    """Reserva un rango de VLANs para uso especial"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'Invalid JSON',
+                'timestamp': datetime.datetime.utcnow().isoformat()
+            }), 400
+        
+        required_fields = ['infrastructure', 'start_vlan', 'end_vlan']
+        missing = [f for f in required_fields if f not in data]
+        if missing:
+            return jsonify({
+                'success': False,
+                'error': f'Missing fields: {", ".join(missing)}',
+                'timestamp': datetime.datetime.utcnow().isoformat()
+            }), 400
+        
+        # Verificar permisos - solo admin puede reservar VLANs
+        if 'manage_vlans' not in g.current_user.get('permissions', []):
+            return jsonify({
+                'success': False,
+                'error': 'Insufficient permissions',
+                'timestamp': datetime.datetime.utcnow().isoformat()
+            }), 403
+        
+        db = get_db()
+        vlan_manager = get_vlan_manager(db)
+        
+        success = vlan_manager.reserve_vlan_range(
+            infrastructure=data['infrastructure'],
+            start_vlan=data['start_vlan'],
+            end_vlan=data['end_vlan'],
+            description=data.get('description')
+        )
+        
+        if success:
+            return jsonify({
+                'success': True,
+                'message': f'VLAN range {data["start_vlan"]}-{data["end_vlan"]} reserved',
+                'timestamp': datetime.datetime.utcnow().isoformat()
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to reserve VLAN range',
+                'timestamp': datetime.datetime.utcnow().isoformat()
+            }), 400
+        
+    except Exception as e:
+        logger.error(f"Reserve VLAN range error: {e}")
+        return jsonify({
+            'success': False,
+            'error': 'Internal server error',
+            'timestamp': datetime.datetime.utcnow().isoformat()
+        }), 500
 
 if __name__ == '__main__':
     init_db()

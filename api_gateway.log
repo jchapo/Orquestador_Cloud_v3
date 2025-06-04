@@ -1,0 +1,67 @@
+nohup: ignoring input
+2025-06-03 23:23:42,521 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+ * Serving Flask app 'api_gateway'
+ * Debug mode: on
+2025-06-03 23:23:42,737 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5000
+ * Running on http://10.20.12.187:5000
+2025-06-03 23:23:42,737 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-06-03 23:23:42,749 - werkzeug - INFO -  * Restarting with stat
+2025-06-03 23:23:43,082 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-03 23:23:43,093 - werkzeug - WARNING -  * Debugger is active!
+2025-06-03 23:23:43,105 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-03 23:24:13,302 - __main__ - INFO - [641b2903-8879-41ff-b6c1-f3a12161cc0b] GET /health from 127.0.0.1
+2025-06-03 23:24:13,304 - __main__ - INFO - [641b2903-8879-41ff-b6c1-f3a12161cc0b] Response: 200 in 0.002s
+2025-06-03 23:24:13,305 - werkzeug - INFO - 127.0.0.1 - - [03/Jun/2025 23:24:13] "GET /health HTTP/1.1" 200 -
+2025-06-03 23:24:28,944 - __main__ - INFO - [c85e55f1-c00b-41a8-8db7-6898dc60380f] GET /health from 127.0.0.1
+2025-06-03 23:24:28,946 - __main__ - INFO - [c85e55f1-c00b-41a8-8db7-6898dc60380f] Response: 200 in 0.001s
+2025-06-03 23:24:28,946 - werkzeug - INFO - 127.0.0.1 - - [03/Jun/2025 23:24:28] "GET /health HTTP/1.0" 200 -
+2025-06-03 23:24:46,360 - __main__ - INFO - [798b651e-5440-42da-8a2d-53819e487e1b] GET /health from 127.0.0.1
+2025-06-03 23:24:46,361 - __main__ - INFO - [798b651e-5440-42da-8a2d-53819e487e1b] Response: 200 in 0.001s
+2025-06-03 23:24:46,362 - werkzeug - INFO - 127.0.0.1 - - [03/Jun/2025 23:24:46] "GET /health HTTP/1.1" 200 -
+2025-06-03 23:47:20,871 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/network_service/vlan_manager.py', reloading
+2025-06-03 23:47:20,925 - werkzeug - INFO -  * Restarting with stat
+2025-06-03 23:47:21,234 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-03 23:47:21,245 - werkzeug - WARNING -  * Debugger is active!
+2025-06-03 23:47:21,246 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-03 23:51:59,180 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/network_service/database.py', reloading
+2025-06-03 23:51:59,238 - werkzeug - INFO -  * Restarting with stat
+2025-06-03 23:51:59,544 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-03 23:51:59,555 - werkzeug - WARNING -  * Debugger is active!
+2025-06-03 23:51:59,557 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-03 23:56:04,203 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/network_service/network_service.py', reloading
+2025-06-03 23:56:04,272 - werkzeug - INFO -  * Restarting with stat
+2025-06-03 23:56:04,585 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-03 23:56:04,596 - werkzeug - WARNING -  * Debugger is active!
+2025-06-03 23:56:04,598 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-04 00:00:04,293 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/network_service/network_service.py', reloading
+2025-06-04 00:00:04,347 - werkzeug - INFO -  * Restarting with stat
+2025-06-04 00:00:04,652 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-04 00:00:04,663 - werkzeug - WARNING -  * Debugger is active!
+2025-06-04 00:00:04,664 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-04 00:01:23,205 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/network_service/network_service.py', reloading
+2025-06-04 00:01:23,266 - werkzeug - INFO -  * Restarting with stat
+2025-06-04 00:01:23,613 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-04 00:01:23,625 - werkzeug - WARNING -  * Debugger is active!
+2025-06-04 00:01:23,627 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-04 00:02:17,004 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/network_service/network_service.py', reloading
+2025-06-04 00:02:17,069 - werkzeug - INFO -  * Restarting with stat
+2025-06-04 00:02:17,378 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-04 00:02:17,389 - werkzeug - WARNING -  * Debugger is active!
+2025-06-04 00:02:17,391 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-04 00:09:32,370 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/template_service/advanced_topology_generator.py', reloading
+2025-06-04 00:09:32,444 - werkzeug - INFO -  * Restarting with stat
+2025-06-04 00:09:32,765 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-04 00:09:32,779 - werkzeug - WARNING -  * Debugger is active!
+2025-06-04 00:09:32,780 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-04 00:09:34,808 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/api_gateway.py', reloading
+2025-06-04 00:09:34,849 - werkzeug - INFO -  * Restarting with stat
+2025-06-04 00:09:35,147 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-04 00:09:35,158 - werkzeug - WARNING -  * Debugger is active!
+2025-06-04 00:09:35,164 - werkzeug - INFO -  * Debugger PIN: 671-258-960
+2025-06-04 00:10:17,456 - werkzeug - INFO -  * Detected change in '/opt/pucp-orchestrator/template_service/advanced_topology_generator.py', reloading
+2025-06-04 00:10:17,515 - werkzeug - INFO -  * Restarting with stat
+2025-06-04 00:10:17,829 - __main__ - INFO - Starting PUCP Cloud Orchestrator API Gateway on 0.0.0.0:5000
+2025-06-04 00:10:17,841 - werkzeug - WARNING -  * Debugger is active!
+2025-06-04 00:10:17,842 - werkzeug - INFO -  * Debugger PIN: 671-258-960

@@ -1,0 +1,7 @@
+nohup: ignoring input
+INFO:__main__:Default users created successfully
+INFO:__main__:Starting Auth Service on port 5001...
+ * Serving Flask app 'auth_service'
+ * Debug mode: off
+Address already in use
+Port 5001 is in use by another program. Either identify and stop that program, or start the server with a different port.

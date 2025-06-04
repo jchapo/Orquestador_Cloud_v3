@@ -280,6 +280,12 @@ class APIGateway:
             logger.error(f"Internal error: {str(error)}")
             return jsonify({'error': 'Internal server error'}), 500
     
+        @self.app.route('/api/vlans/<path:subpath>', methods=['GET', 'POST', 'PUT', 'DELETE'])
+        @self.require_auth
+        def vlan_management(subpath):
+            """VLAN management endpoints"""
+            return self.proxy_request(self.config['NETWORK_SERVICE_URL'], f'/api/vlans/{subpath}')
+    
     def run(self, host='0.0.0.0', port=5000, debug=False):
         """Run the API Gateway"""
         logger.info(f"Starting PUCP Cloud Orchestrator API Gateway on {host}:{port}")

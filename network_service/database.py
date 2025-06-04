@@ -107,6 +107,29 @@ def init_db():
     db.close()
     print("Database initialized successfully")
 
+    # Tabla de pool de VLANs (NUEVA)
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS vlan_pool (
+            vlan_id INTEGER NOT NULL,
+            infrastructure TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'available' CHECK (state IN ('available', 'allocated', 'reserved', 'error')),
+            network_id TEXT,
+            slice_id TEXT,
+            usage_description TEXT,
+            assigned_at TIMESTAMP,
+            released_at TIMESTAMP,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (vlan_id, infrastructure)
+        )
+    ''')
+    
+    # Índices para optimización
+    db.execute('CREATE INDEX IF NOT EXISTS idx_vlan_pool_state ON vlan_pool(infrastructure, state)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_vlan_pool_network ON vlan_pool(network_id)')
+    db.execute('CREATE INDEX IF NOT EXISTS idx_vlan_pool_slice ON vlan_pool(slice_id)')
+
+
+
 def query_db(query, args=(), one=False):
     """Helper para ejecutar consultas"""
     db = get_db()

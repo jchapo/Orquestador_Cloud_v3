@@ -1,0 +1,9 @@
+nohup: ignoring input
+ * Serving Flask app 'network_service'
+ * Debug mode: off
+2025-06-03 23:23:56,558 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5004
+ * Running on http://10.20.12.187:5004
+2025-06-03 23:23:56,558 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-06-03 23:24:25,013 - werkzeug - INFO - 127.0.0.1 - - [03/Jun/2025 23:24:25] "GET /health HTTP/1.1" 200 -
