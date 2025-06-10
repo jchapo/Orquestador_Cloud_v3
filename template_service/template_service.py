@@ -8,13 +8,27 @@ from functools import wraps
 import jwt
 from advanced_topology_generator import AdvancedTopologyGenerator, TopologyType, FlavorManager
 import uuid
+import logging
+import traceback
 
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('/var/log/pucp-orchestrator/template-service.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
 
 # Configuración
 app.config['DATABASE'] = 'template_service.db'
+app.config['SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'pucp-cloud-secret-2025')
 
 # Topologías predefinidas
 PREDEFINED_TEMPLATES = {
@@ -74,7 +88,7 @@ def init_db():
                 user_id TEXT NOT NULL,
                 name TEXT NOT NULL,
                 description TEXT,
-                topology_type TEXT NOT NULL,
+                topology_type TEXT DEFAULT 'custom',
                 node_count INTEGER DEFAULT 3,
                 infrastructure TEXT DEFAULT 'linux',
                 definition TEXT NOT NULL,
@@ -86,7 +100,6 @@ def init_db():
         db.commit()
 
 def token_required(f):
-    """Decorador para requerir autenticación"""
     @wraps(f)
     def decorated(*args, **kwargs):
         auth_header = request.headers.get('Authorization')
@@ -95,10 +108,29 @@ def token_required(f):
         
         try:
             token = auth_header.split(' ')[1]
-            payload = jwt.decode(token, 'pucp-cloud-secret-2025', algorithms=['HS256'])
-            g.current_user = payload
+            payload = jwt.decode(
+                token, 
+                app.config['SECRET_KEY'], 
+                algorithms=['HS256']
+            )
+            
+            # Configurar usuario actual
+            g.current_user = {
+                'user_id': payload.get('user_id') or payload.get('sub'),
+                'username': payload.get('username') or payload.get('sub'),
+                'role': payload.get('role', 'user'),
+                'permissions': payload.get('permissions', [])
+            }
+            
+        except jwt.ExpiredSignatureError:
+            logger.error("Token has expired")
+            return jsonify({'error': 'Token has expired'}), 401
+        except jwt.InvalidTokenError as e:
+            logger.error(f"Invalid token: {e}")
+            return jsonify({'error': 'Invalid token'}), 401
         except Exception as e:
-            return jsonify({'error': 'Invalid or expired token'}), 401
+            logger.error(f"Unexpected token error: {e}")
+            return jsonify({'error': 'Authentication failed'}), 401
         
         return f(*args, **kwargs)
     return decorated
@@ -106,45 +138,65 @@ def token_required(f):
 # Inicializar generador
 topology_generator = AdvancedTopologyGenerator()
 
-@app.route('/api/templates', methods=['GET'])
+@app.route('/templates', methods=['GET'])
 @token_required
 def list_templates():
-    db = get_db()
-    
-    # Plantillas predefinidas con información extendida
-    predefined = []
-    for key, template in PREDEFINED_TEMPLATES.items():
-        predefined.append({
-            'id': key,
-            'name': template['name'],
-            'description': template['description'],
-            'topology_type': template['type'],
-            'node_count': template['node_count'],
-            'is_predefined': True
+    try:
+        # Logging detallado del usuario
+        logger.info(f"Processing list_templates for user: {g.current_user}")
+        
+        db = get_db()
+        
+        # Plantillas predefinidas
+        predefined = []
+        for key, template in PREDEFINED_TEMPLATES.items():
+            predefined.append({
+                'id': key,
+                'name': template['name'],
+                'description': template['description'],
+                'topology_type': template['type'],
+                'node_count': template['node_count'],
+                'is_predefined': True
+            })
+        
+        # Plantillas personalizadas con manejo de columnas dinámicas
+        custom_query = '''
+            SELECT 
+                id, 
+                name, 
+                description, 
+                COALESCE(topology_type, 'custom') as topology_type, 
+                COALESCE(node_count, 3) as node_count, 
+                is_public 
+            FROM templates 
+            WHERE user_id = ? OR is_public = 1
+            ORDER BY created_at DESC
+        '''
+        
+        custom = db.execute(custom_query, (g.current_user['user_id'],)).fetchall()
+        
+        return jsonify({
+            'predefined': predefined,
+            'custom': [dict(template) for template in custom],
+            'topology_types': [
+                {'type': 'linear', 'name': 'Linear', 'min_nodes': 2},
+                {'type': 'ring', 'name': 'Ring', 'min_nodes': 3}, 
+                {'type': 'star', 'name': 'Star', 'min_nodes': 2},
+                {'type': 'mesh', 'name': 'Mesh', 'min_nodes': 2},
+                {'type': 'custom', 'name': 'Custom', 'min_nodes': 1}
+            ],
+            'available_flavors': FlavorManager.list_flavors()
         })
-    
-    # Plantillas personalizadas
-    custom = db.execute('''
-        SELECT id, name, description, topology_type, node_count, is_public 
-        FROM templates 
-        WHERE user_id = ? OR is_public = 1
-        ORDER BY created_at DESC
-    ''', (g.current_user['username'],)).fetchall()
-    
-    return jsonify({
-        'predefined': predefined,
-        'custom': [dict(template) for template in custom],
-        'topology_types': [
-            {'type': 'linear', 'name': 'Linear', 'min_nodes': 2},
-            {'type': 'ring', 'name': 'Ring', 'min_nodes': 3}, 
-            {'type': 'star', 'name': 'Star', 'min_nodes': 2},
-            {'type': 'mesh', 'name': 'Mesh', 'min_nodes': 2},
-            {'type': 'custom', 'name': 'Custom', 'min_nodes': 1}
-        ],
-        'available_flavors': FlavorManager.list_flavors()
-    })
+        
+    except Exception as e:
+        logger.error(f"List templates error: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'error': 'Internal server error', 
+            'details': str(e)
+        }), 500
 
-@app.route('/api/templates', methods=['POST'])
+@app.route('/templates', methods=['POST'])
 @token_required
 def create_template():
     data = request.get_json()
@@ -173,7 +225,7 @@ def create_template():
     
     return jsonify({'id': template_id, 'message': 'Template created successfully'}), 201
 
-@app.route('/api/templates/generate', methods=['POST'])
+@app.route('/templates/generate', methods=['POST'])
 @token_required 
 def generate_template():
     """Genera una topología dinámicamente"""
@@ -220,7 +272,7 @@ def generate_template():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/templates/types', methods=['GET'])
+@app.route('/templates/types', methods=['GET'])
 @token_required
 def get_topology_types():
     """Lista tipos de topología disponibles"""
@@ -259,7 +311,7 @@ def get_topology_types():
         'infrastructures': ['linux', 'openstack']
     })
 
-@app.route('/api/templates/<template_id>', methods=['GET'])
+@app.route('/templates/<template_id>', methods=['GET'])
 @token_required
 def get_template(template_id):
     # Verificar si es predefinido

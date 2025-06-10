@@ -106,17 +106,6 @@ class APIGateway:
     def proxy_request(self, service_url: str, path: str):
         """Proxy request to appropriate microservice - FIXED VERSION"""
         try:
-            # Imprimir detalles de la solicitud
-            # Preparar URL objetivo
-            if path.startswith('/'):
-                target_url = f"{service_url}{path}"
-            else:
-                target_url = f"{service_url}/{path}"
-            
-            # Logging detallado
-            logger.info(f"Proxying request to: {target_url}")
-            logger.info(f"Request method: {request.method}")
-            logger.info(f"Request headers: {dict(request.headers)}")
             # Preparar URL objetivo
             if path.startswith('/'):
                 target_url = f"{service_url}{path}"
@@ -200,10 +189,7 @@ class APIGateway:
             logger.error(f"Proxy error: {str(e)}")
             logger.error(traceback.format_exc())
             return jsonify({'error': f'Internal server error: {str(e)}'}), 500
-        except Exception as e:
-            logger.error(f"Detailed proxy error: {traceback.format_exc()}")
-            return jsonify({'error': f'Proxy error: {str(e)}'}), 500
-
+    
     def setup_routes(self):
         """Setup API routes"""
         
@@ -264,7 +250,7 @@ class APIGateway:
         @self.require_auth
         def images():
             """Image management"""
-            return self.proxy_request(self.config['IMAGE_SERVICE_URL'], '/images')
+            return self.proxy_request(self.config['IMAGE_SERVICE_URL'], request.path)
         
         @self.app.route('/api/resources', methods=['GET'])
         @self.require_auth

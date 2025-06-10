@@ -430,7 +430,7 @@ def health():
         'timestamp': datetime.datetime.utcnow().isoformat()
     })
 
-@app.route('/api/networks', methods=['GET'])
+@app.route('/networks', methods=['GET'])
 @token_required
 def list_networks():
     """Lista redes del usuario"""
