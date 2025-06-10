@@ -17,7 +17,7 @@ from functools import wraps
 from typing import Dict, List, Any, Optional
 import jwt
 import ipaddress
-from .vlan_manager import VLANManager, VLANState
+from vlan_manager import VLANManager, VLANState
 
 
 # Configurar logging
@@ -259,24 +259,6 @@ def validate_cidr(cidr_str):
     except ValueError as e:
         return False, str(e)
 
-""" def get_next_available_vlan(infrastructure: str, db) -> Optional[int]:
-    """Obtiene siguiente VLAN disponible"""
-    available = db.execute('''
-        SELECT vlan_id FROM vlan_assignments 
-        WHERE infrastructure = ? AND network_id IS NULL AND is_reserved = 0
-        ORDER BY vlan_id
-        LIMIT 1
-    ''', (infrastructure,)).fetchone()
-    
-    return available['vlan_id'] if available else None
-
-def allocate_vlan(vlan_id: int, network_id: str, db):
-    """Asigna VLAN a una red"""
-    db.execute('''
-        UPDATE vlan_assignments 
-        SET network_id = ?, assigned_at = CURRENT_TIMESTAMP
-        WHERE vlan_id = ?
-    ''', (network_id, vlan_id)) """
 
 def get_vlan_manager(db):
     """Obtiene una instancia del VLAN Manager"""

@@ -106,22 +106,12 @@ class APIGateway:
     def proxy_request(self, service_url: str, path: str):
         """Proxy request to appropriate microservice - FIXED VERSION"""
         try:
-            # Imprimir detalles de la solicitud
-            # Preparar URL objetivo
-            if path.startswith('/'):
-                target_url = f"{service_url}{path}"
+            # Limpiar path para auth service - remover prefijo /api/auth
+            if path.startswith('/api/auth/'):
+                clean_path = path.replace('/api/auth', '')
             else:
-                target_url = f"{service_url}/{path}"
-            
-            # Logging detallado
-            logger.info(f"Proxying request to: {target_url}")
-            logger.info(f"Request method: {request.method}")
-            logger.info(f"Request headers: {dict(request.headers)}")
-            # Preparar URL objetivo
-            if path.startswith('/'):
-                target_url = f"{service_url}{path}"
-            else:
-                target_url = f"{service_url}/{path}"
+                clean_path = path
+            target_url = f"{service_url}{clean_path}"
                 
             # Preparar headers
             headers = {'Content-Type': 'application/json'}
@@ -200,10 +190,7 @@ class APIGateway:
             logger.error(f"Proxy error: {str(e)}")
             logger.error(traceback.format_exc())
             return jsonify({'error': f'Internal server error: {str(e)}'}), 500
-        except Exception as e:
-            logger.error(f"Detailed proxy error: {traceback.format_exc()}")
-            return jsonify({'error': f'Proxy error: {str(e)}'}), 500
-
+    
     def setup_routes(self):
         """Setup API routes"""
         
@@ -234,7 +221,7 @@ class APIGateway:
         @self.require_auth
         def slices():
             """Slice management endpoints"""
-            return self.proxy_request(self.config['SLICE_SERVICE_URL'], '/slices')
+            return self.proxy_request(self.config['SLICE_SERVICE_URL'], request.path)
         
         @self.app.route('/api/slices/<slice_id>', methods=['GET', 'PUT', 'DELETE'])
         @self.require_auth
@@ -252,25 +239,25 @@ class APIGateway:
         @self.require_auth
         def templates():
             """Template management"""
-            return self.proxy_request(self.config['TEMPLATE_SERVICE_URL'], '/templates')
+            return self.proxy_request(self.config['TEMPLATE_SERVICE_URL'], request.path)
         
         @self.app.route('/api/networks', methods=['GET', 'POST'])
         @self.require_auth
         def networks():
             """Network management"""
-            return self.proxy_request(self.config['NETWORK_SERVICE_URL'], '/networks')
+            return self.proxy_request(self.config['NETWORK_SERVICE_URL'], request.path)
         
         @self.app.route('/api/images', methods=['GET', 'POST'])
         @self.require_auth
         def images():
             """Image management"""
-            return self.proxy_request(self.config['IMAGE_SERVICE_URL'], '/images')
+            return self.proxy_request(self.config['IMAGE_SERVICE_URL'], request.path)
         
         @self.app.route('/api/resources', methods=['GET'])
         @self.require_auth
         def resources():
             """Get system resources status"""
-            return self.proxy_request(self.config['SLICE_SERVICE_URL'], '/resources')
+            return self.proxy_request(self.config['SLICE_SERVICE_URL'], '/api/resources')
         
         # Error handlers
         @self.app.errorhandler(400)

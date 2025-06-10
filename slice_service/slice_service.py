@@ -510,7 +510,7 @@ def health():
         'timestamp': datetime.datetime.utcnow().isoformat()
     })
 
-@app.route('/api/slices', methods=['GET'])
+@app.route('/slices', methods=['GET'])
 @token_required
 def list_slices():
     """Lista slices del usuario"""
@@ -557,7 +557,7 @@ def list_slices():
         logger.error(f"List slices error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
-@app.route('/api/slices', methods=['POST'])
+@app.route('/slices', methods=['POST'])
 @token_required
 def create_slice():
     """Crea un nuevo slice"""
@@ -685,7 +685,7 @@ def create_slice():
         logger.error(f"Create slice error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
-@app.route('/api/slices/<slice_id>', methods=['GET'])
+@app.route('/slices/<slice_id>', methods=['GET'])
 @token_required
 def get_slice(slice_id):
     """Obtiene detalles de un slice"""
@@ -746,7 +746,7 @@ def get_slice(slice_id):
         logger.error(f"Get slice error: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
-@app.route('/api/slices/<slice_id>/deploy', methods=['POST'])
+@app.route('/slices/<slice_id>/deploy', methods=['POST'])
 @token_required
 def deploy_slice(slice_id):
     """Despliega un slice con VM placement"""
@@ -868,7 +868,7 @@ def deploy_slice(slice_id):
             pass
         return jsonify({'error': 'Internal server error'}), 500
 
-@app.route('/api/resources', methods=['GET'])
+@app.route('/resources', methods=['GET'])
 @token_required
 def get_resources():
     """Obtiene estado de recursos del sistema (R4)"""

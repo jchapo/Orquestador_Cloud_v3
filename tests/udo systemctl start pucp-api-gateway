@@ -1,0 +1,17 @@
+● pucp-api-gateway.service - PUCP Cloud Orchestrator - API Gateway
+     Loaded: loaded (/etc/systemd/system/pucp-api-gateway.service; enabled; vendor preset: enabled)
+     Active: inactive (dead) since Thu 2025-06-05 05:38:13 UTC; 6min ago
+    Process: 174411 ExecStart=/opt/pucp-orchestrator/venv/bin/gunicorn --config gunicorn.conf.py wsgi:app (code=exited, status=0/SUCCESS)
+   Main PID: 174411 (code=exited, status=0/SUCCESS)
+     Status: "Gunicorn arbiter booted"
+
+Jun 05 05:38:13 app gunicorn[174427]: [2025-06-05 05:38:13 +0000] [174427] [INFO] Worker exiting (pid: 174427)
+Jun 05 05:38:13 app gunicorn[174429]: [2025-06-05 05:38:13 +0000] [174429] [INFO] Worker exiting (pid: 174429)
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [INFO] Handling signal: term
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [ERROR] Worker (pid:174426) was sent SIGTERM!
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [ERROR] Worker (pid:174429) was sent SIGTERM!
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [ERROR] Worker (pid:174427) was sent SIGTERM!
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [ERROR] Worker (pid:174428) was sent SIGTERM!
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [INFO] Shutting down: Master
+Jun 05 05:38:13 app systemd[1]: pucp-api-gateway.service: Succeeded.
+Jun 05 05:38:13 app systemd[1]: Stopped PUCP Cloud Orchestrator - API Gateway.

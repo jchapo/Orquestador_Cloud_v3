@@ -1,0 +1,19 @@
+[0;1;32m●[0m pucp-slice-service.service - PUCP Cloud Orchestrator - Slice Service
+     Loaded: loaded (/etc/systemd/system/pucp-slice-service.service; enabled; vendor preset: enabled)
+     Active: [0;1;32mactive (running)[0m since Thu 2025-06-05 06:51:34 UTC; 46s ago
+   Main PID: 179569 (python)
+      Tasks: 1 (limit: 2344)
+     Memory: 21.4M
+     CGroup: /system.slice/pucp-slice-service.service
+             └─179569 /opt/pucp-orchestrator/venv/bin/python slice_service.py
+
+Jun 05 06:51:34 app python[179569]: 2025-06-05 06:51:34,832 - werkzeug - INFO - WARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.
+Jun 05 06:51:34 app python[179569]:  * Running on all addresses (0.0.0.0)
+Jun 05 06:51:34 app python[179569]:  * Running on http://127.0.0.1:5002
+Jun 05 06:51:34 app python[179569]:  * Running on http://10.20.12.16:5002
+Jun 05 06:51:34 app python[179569]: 2025-06-05 06:51:34,832 - werkzeug - INFO - Press CTRL+C to quit
+Jun 05 06:51:49 app python[179569]: 2025-06-05 06:51:49,185 - werkzeug - INFO - 127.0.0.1 - - [05/Jun/2025 06:51:49] "GET /health HTTP/1.1" 200 -
+Jun 05 06:51:50 app python[179569]: 2025-06-05 06:51:50,583 - werkzeug - INFO - 127.0.0.1 - - [05/Jun/2025 06:51:50] "GET /slices HTTP/1.1" 404 -
+Jun 05 06:51:50 app python[179569]: 2025-06-05 06:51:50,638 - werkzeug - INFO - 127.0.0.1 - - [05/Jun/2025 06:51:50] "GET /resources HTTP/1.1" 404 -
+Jun 05 06:51:50 app python[179569]: 2025-06-05 06:51:50,684 - werkzeug - INFO - 127.0.0.1 - - [05/Jun/2025 06:51:50] "GET /slices HTTP/1.1" 404 -
+Jun 05 06:51:50 app python[179569]: 2025-06-05 06:51:50,713 - werkzeug - INFO - 127.0.0.1 - - [05/Jun/2025 06:51:50] "POST /slices HTTP/1.1" 404 -

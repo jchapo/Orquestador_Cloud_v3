@@ -1,0 +1,21 @@
+-- Logs begin at Tue 2022-04-05 17:18:28 UTC, end at Thu 2025-06-05 05:40:47 UTC. --
+Jun 05 05:35:58 app gunicorn[174427]: [2025-06-05 05:35:58 +0000] [174427] [INFO] Booting worker with pid: 174427
+Jun 05 05:35:58 app gunicorn[174428]: [2025-06-05 05:35:58 +0000] [174428] [INFO] Booting worker with pid: 174428
+Jun 05 05:35:58 app gunicorn[174429]: [2025-06-05 05:35:58 +0000] [174429] [INFO] Booting worker with pid: 174429
+Jun 05 05:36:02 app gunicorn[174426]: 2025-06-05 05:36:02,297 - api_gateway - INFO - [2fa3411f-6c36-4cd3-987d-fc6241b8344d] GET /health from 127.0.0.1
+Jun 05 05:36:02 app gunicorn[174426]: 2025-06-05 05:36:02,299 - api_gateway - INFO - [2fa3411f-6c36-4cd3-987d-fc6241b8344d] Response: 200 in 0.001s
+Jun 05 05:36:02 app gunicorn[174426]: 2025-06-05 05:36:02,558 - api_gateway - INFO - [608b97cf-fff9-41ae-aad1-fc71df4f5a0b] GET /api/nonexistent from 127.0.0.1
+Jun 05 05:36:02 app gunicorn[174426]: 2025-06-05 05:36:02,559 - api_gateway - INFO - [608b97cf-fff9-41ae-aad1-fc71df4f5a0b] Response: 404 in 0.001s
+Jun 05 05:38:13 app systemd[1]: Stopping PUCP Cloud Orchestrator - API Gateway...
+Jun 05 05:38:13 app gunicorn[174428]: [2025-06-05 05:38:13 +0000] [174428] [INFO] Worker exiting (pid: 174428)
+Jun 05 05:38:13 app gunicorn[174426]: [2025-06-05 05:38:13 +0000] [174426] [INFO] Worker exiting (pid: 174426)
+Jun 05 05:38:13 app gunicorn[174427]: [2025-06-05 05:38:13 +0000] [174427] [INFO] Worker exiting (pid: 174427)
+Jun 05 05:38:13 app gunicorn[174429]: [2025-06-05 05:38:13 +0000] [174429] [INFO] Worker exiting (pid: 174429)
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [INFO] Handling signal: term
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [ERROR] Worker (pid:174426) was sent SIGTERM!
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [ERROR] Worker (pid:174429) was sent SIGTERM!
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [ERROR] Worker (pid:174427) was sent SIGTERM!
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [ERROR] Worker (pid:174428) was sent SIGTERM!
+Jun 05 05:38:13 app gunicorn[174411]: [2025-06-05 05:38:13 +0000] [174411] [INFO] Shutting down: Master
+Jun 05 05:38:13 app systemd[1]: pucp-api-gateway.service: Succeeded.
+Jun 05 05:38:13 app systemd[1]: Stopped PUCP Cloud Orchestrator - API Gateway.
