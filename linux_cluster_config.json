@@ -1,0 +1,52 @@
+{
+    "cluster_name": "pucp_linux_cluster",
+    "infrastructure_type": "linux",
+    "hypervisors": {
+        "server1": {
+            "uri": "qemu+ssh://root@10.60.1.11/system",
+            "ip": "10.60.1.11",
+            "port": 5811,
+            "max_vcpus": 8,
+            "max_ram": 16384,
+            "max_disk": 100
+        },
+        "server2": {
+            "uri": "qemu+ssh://root@10.60.1.12/system", 
+            "ip": "10.60.1.12",
+            "port": 5812,
+            "max_vcpus": 8,
+            "max_ram": 16384,
+            "max_disk": 100
+        },
+        "server3": {
+            "uri": "qemu+ssh://root@10.60.1.13/system",
+            "ip": "10.60.1.13", 
+            "port": 5813,
+            "max_vcpus": 8,
+            "max_ram": 16384,
+            "max_disk": 100
+        },
+        "server4": {
+            "uri": "qemu+ssh://root@10.60.1.14/system",
+            "ip": "10.60.1.14",
+            "port": 5814,
+            "max_vcpus": 8,
+            "max_ram": 16384,
+            "max_disk": 100
+        }
+    },
+    "network_config": {
+        "ovs_bridge": "ovs1",
+        "network_range": "10.60.1.0/24",
+        "gateway_ip": "10.60.1.1",
+        "vlan_range": {
+            "start": 100,
+            "end": 199
+        }
+    },
+    "ssh_config": {
+        "key_path": "/opt/pucp-orchestrator/keys/orchestrator_rsa",
+        "user": "root"
+    },
+    "setup_completed": "2025-06-10T23:58:27Z"
+}

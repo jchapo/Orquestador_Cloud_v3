@@ -16,6 +16,8 @@ import logging
 from functools import wraps
 from typing import Dict, List, Any, Optional
 import jwt
+from drivers.linux_driver import LinuxClusterDriver
+from drivers.base_driver import BaseDriver
 
 # Configurar logging
 logging.basicConfig(
@@ -501,6 +503,19 @@ class VMPlacementEngine:
         
         return {'success': True, 'placement': placement}
 
+# Driver factory
+def get_driver(infrastructure: str) -> BaseDriver:
+    """Factory para obtener driver según infraestructura"""
+    if infrastructure == 'linux':
+        return LinuxClusterDriver()
+    elif infrastructure == 'openstack':
+        # Por implementar
+        from drivers.openstack_driver import OpenStackDriver
+        return OpenStackDriver()
+    else:
+        raise ValueError(f"Unsupported infrastructure: {infrastructure}")
+
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
@@ -749,7 +764,7 @@ def get_slice(slice_id):
 @app.route('/slices/<slice_id>/deploy', methods=['POST'])
 @token_required
 def deploy_slice(slice_id):
-    """Despliega un slice con VM placement"""
+    """Despliega un slice usando el driver correspondiente"""
     try:
         db = get_db()
         
@@ -771,9 +786,13 @@ def deploy_slice(slice_id):
         ''', (slice_id,))
         db.commit()
         
-        # Obtener nodos del slice
+        # Obtener nodos y redes del slice
         nodes = db.execute('''
             SELECT * FROM nodes WHERE slice_id = ? ORDER BY name
+        ''', (slice_id,)).fetchall()
+        
+        networks = db.execute('''
+            SELECT * FROM slice_networks WHERE slice_id = ? ORDER BY name
         ''', (slice_id,)).fetchall()
         
         if not nodes:
@@ -803,71 +822,186 @@ def deploy_slice(slice_id):
             db.commit()
             return jsonify({'error': placement_result['error']}), 400
         
-        # Actualizar nodos con asignación de servidores
-        for node_name, assignment in placement_result['placement'].items():
+        # Obtener driver según infraestructura
+        try:
+            driver = get_driver(slice_data['infrastructure'])
+        except ValueError as e:
             db.execute('''
-                UPDATE nodes SET assigned_host = ?, status = 'assigned'
-                WHERE slice_id = ? AND name = ?
-            ''', (assignment['hostname'], slice_id, node_name))
+                UPDATE slices SET status = 'error', error_message = ?
+                WHERE id = ?
+            ''', (str(e), slice_id))
+            db.commit()
+            return jsonify({'error': str(e)}), 400
         
-        # Actualizar recursos utilizados en servidores
-        for node in node_list:
-            if node['name'] in placement_result['placement']:
-                assignment = placement_result['placement'][node['name']]
-                flavor = VM_FLAVORS[node['flavor']]
-                
-                db.execute('''
-                    UPDATE server_resources 
-                    SET used_vcpus = used_vcpus + ?,
-                        used_ram = used_ram + ?,
-                        used_disk = used_disk + ?,
-                        last_updated = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                ''', (flavor['vcpus'], flavor['ram'], flavor['disk'], assignment['server_id']))
-        
-        # Actualizar slice con datos de deployment
-        deployment_data = {
-            'placement': placement_result['placement'],
-            'deployed_at': datetime.datetime.utcnow().isoformat(),
-            'infrastructure': slice_data['infrastructure']
+        # Preparar configuración para el driver
+        slice_config = {
+            'id': slice_id,
+            'name': slice_data['name'],
+            'infrastructure': slice_data['infrastructure'],
+            'nodes': [
+                {
+                    'name': node['name'],
+                    'image': node['image'],
+                    'flavor': node['flavor'],
+                    'cpu': 1,  # Mapear desde flavor
+                    'ram': 1024,  # Mapear desde flavor
+                    'disk': 10  # Mapear desde flavor
+                }
+                for node in node_list
+            ],
+            'networks': [
+                {
+                    'name': net['name'],
+                    'cidr': net['cidr'],
+                    'gateway': net['gateway'],
+                    'dns_servers': json.loads(net['dns_servers']) if net['dns_servers'] else []
+                }
+                for net in networks
+            ]
         }
         
+        # Actualizar estado a 'deploying'
         db.execute('''
-            UPDATE slices 
-            SET status = 'deploying', 
-                deployment_data = ?,
-                deployed_at = CURRENT_TIMESTAMP,
-                updated_at = CURRENT_TIMESTAMP
+            UPDATE slices SET status = 'deploying', updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
-        ''', (json.dumps(deployment_data), slice_id))
-        
+        ''', (slice_id,))
         db.commit()
         
-        # Aquí se enviaría la solicitud al driver correspondiente
-        # Por ahora simulamos el éxito del deployment
+        # Ejecutar deployment usando el driver
+        logger.info(f"Starting deployment of slice {slice_id} using {driver.driver_name}")
         
-        logger.info(f"Slice {slice_id} deployment started with placement: {placement_result['placement']}")
+        deployment_result = driver.deploy_slice(slice_config, placement_result['placement'])
         
-        return jsonify({
-            'status': 'deployment_started',
-            'slice_id': slice_id,
-            'placement': placement_result['placement'],
-            'message': 'Slice deployment initiated successfully'
-        })
+        # Actualizar base de datos con resultados
+        if deployment_result['status'] == 'success':
+            # Actualizar nodos con información de deployment
+            for vm_info in deployment_result['deployed_vms']:
+                db.execute('''
+                    UPDATE nodes 
+                    SET vm_id = ?, ip_address = ?, console_url = ?, status = 'running'
+                    WHERE slice_id = ? AND name = ?
+                ''', (
+                    vm_info['vm_id'], 
+                    vm_info.get('ip_address'), 
+                    vm_info.get('console_url'),
+                    slice_id, 
+                    vm_info['name']
+                ))
+            
+            # Actualizar slice
+            db.execute('''
+                UPDATE slices 
+                SET status = 'active', 
+                    deployment_data = ?,
+                    deployed_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP,
+                    error_message = NULL
+                WHERE id = ?
+            ''', (json.dumps(deployment_result), slice_id))
+            
+            db.commit()
+            
+            logger.info(f"✓ Slice {slice_id} deployed successfully")
+            
+            return jsonify({
+                'status': 'success',
+                'slice_id': slice_id,
+                'deployment_result': deployment_result,
+                'message': 'Slice deployed successfully'
+            })
+            
+        else:
+            # Error en deployment
+            error_message = deployment_result.get('error', 'Deployment failed')
+            
+            db.execute('''
+                UPDATE slices 
+                SET status = 'error', 
+                    error_message = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (error_message, slice_id))
+            db.commit()
+            
+            logger.error(f"✗ Slice {slice_id} deployment failed: {error_message}")
+            
+            return jsonify({
+                'status': 'failed',
+                'slice_id': slice_id,
+                'error': error_message,
+                'deployment_result': deployment_result
+            }), 500
         
     except Exception as e:
-        logger.error(f"Deploy slice error: {e}")
+        logger.error(f"Critical error deploying slice {slice_id}: {e}")
+        
         # Actualizar estado a error
         try:
             db = get_db()
             db.execute('''
-                UPDATE slices SET status = 'error', error_message = ? WHERE id = ?
+                UPDATE slices SET status = 'error', error_message = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
             ''', (str(e), slice_id))
             db.commit()
         except:
             pass
+        
         return jsonify({'error': 'Internal server error'}), 500
 
+# Agregar endpoint para eliminar slice
+@app.route('/slices/<slice_id>', methods=['DELETE'])
+@token_required
+def delete_slice(slice_id):
+    """Elimina un slice completamente"""
+    try:
+        db = get_db()
+        
+        # Verificar propiedad
+        slice_data = db.execute('''
+            SELECT * FROM slices WHERE id = ? AND user_id = ? AND deleted_at IS NULL
+        ''', (slice_id, g.current_user['user_id'])).fetchone()
+        
+        if not slice_data:
+            return jsonify({'error': 'Slice not found or access denied'}), 404
+        
+        # Obtener VMs del slice
+        vms = db.execute('''
+            SELECT * FROM nodes WHERE slice_id = ?
+        ''', (slice_id,)).fetchall()
+        
+        # Si el slice está desplegado, usar driver para eliminarlo
+        if slice_data['status'] in ['active', 'error'] and vms:
+            try:
+                driver = get_driver(slice_data['infrastructure'])
+                vm_list = [dict(vm) for vm in vms]
+                
+                destruction_result = driver.destroy_slice(slice_id, vm_list)
+                
+                logger.info(f"Slice {slice_id} destruction result: {destruction_result}")
+                
+            except Exception as e:
+                logger.error(f"Error destroying slice infrastructure: {e}")
+                # Continuar con eliminación de BD aunque falle la infra
+        
+        # Marcar como eliminado en BD
+        db.execute('''
+            UPDATE slices 
+            SET status = 'deleted', deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        ''', (slice_id,))
+        
+        db.commit()
+        
+        logger.info(f"✓ Slice {slice_id} deleted successfully")
+        
+        return jsonify({
+            'message': 'Slice deleted successfully',
+            'slice_id': slice_id
+        })
+        
+    except Exception as e:
+        logger.error(f"Error deleting slice {slice_id}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
 @app.route('/resources', methods=['GET'])
 @token_required
 def get_resources():
