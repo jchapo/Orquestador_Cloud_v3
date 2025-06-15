@@ -8,8 +8,8 @@ echo "=== Verificación Completa del Cluster PUCP ==="
 
 # Configuración
 SERVER_PASSWORD="ubuntu"
-#SERVERS=("pucp-server1" "pucp-server2" "pucp-server3" "pucp-server4")
-SERVERS=("pucp-server3" "pucp-server4")
+SERVERS=("pucp-server1" "pucp-server2" "pucp-server3" "pucp-server4")
+#SERVERS=("pucp-server3" "pucp-server4")
 # Colores para output
 RED='\033[0;31m'
 GREEN='\033[0;32m'

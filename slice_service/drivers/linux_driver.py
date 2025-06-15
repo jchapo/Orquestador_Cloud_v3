@@ -28,43 +28,43 @@ class LinuxClusterDriver(BaseDriver):
         # Configuración del cluster según tu documento
         self.hypervisors = {
             'server1': {
-                'uri': 'qemu+ssh://root@10.60.1.11/system',
-                'ip': '10.60.1.11',
+                'uri': 'qemu+ssh://ubuntu@pucp-server1/system',
+                'ip': 'pucp-server1',  # O usar la IP real si prefieres
                 'port': 5811,
-                'max_vcpus': 8,
-                'max_ram': 16384,  # MB
-                'max_disk': 100    # GB
+                'max_vcpus': 4,        # ← Corregido (viste "CPU cores: 4")
+                'max_ram': 4030,       # ← Corregido (viste "Memory: 3.8Gi")
+                'max_disk': 100
             },
             'server2': {
-                'uri': 'qemu+ssh://root@10.60.1.12/system',
-                'ip': '10.60.1.12',
+                'uri': 'qemu+ssh://ubuntu@pucp-server2/system',  # ← ubuntu, no root
+                'ip': 'pucp-server2',
                 'port': 5812,
-                'max_vcpus': 8,
-                'max_ram': 16384,
+                'max_vcpus': 4,
+                'max_ram': 4030,
                 'max_disk': 100
             },
             'server3': {
-                'uri': 'qemu+ssh://root@10.60.1.13/system',
-                'ip': '10.60.1.13',
+                'uri': 'qemu+ssh://ubuntu@pucp-server3/system',  # ← ubuntu, no root
+                'ip': 'pucp-server3',
                 'port': 5813,
-                'max_vcpus': 8,
-                'max_ram': 16384,
+                'max_vcpus': 4,
+                'max_ram': 4030,
                 'max_disk': 100
             },
             'server4': {
-                'uri': 'qemu+ssh://root@10.60.1.14/system',
-                'ip': '10.60.1.14',
+                'uri': 'qemu+ssh://ubuntu@pucp-server4/system',  # ← ubuntu, no root
+                'ip': 'pucp-server4',
                 'port': 5814,
-                'max_vcpus': 8,
-                'max_ram': 16384,
+                'max_vcpus': 4,
+                'max_ram': 4030,
                 'max_disk': 100
             }
         }
         
         # Configuración de red (según tu topología)
         self.ovs_bridge = 'ovs1'  # OVS switch del cluster Linux
-        self.network_range = '10.60.1.0/24'
-        self.gateway_ip = '10.60.1.1'  # Gateway según tu documento
+        self.network_range = '192.168.201.0/24'
+        self.gateway_ip = '192.168.201.1'  # Gateway según tu documento
         
         # Storage pools
         self.storage_pools = {
@@ -545,7 +545,9 @@ class LinuxClusterDriver(BaseDriver):
         
         # Ejecutar comando en el servidor remoto
         server_ip = self.hypervisors[server_name]['ip']
-        ssh_cmd = ['ssh', f'root@{server_ip}'] + cmd
+        ssh_cmd = ['ssh', f'ubuntu@{server_ip}'] + cmd
+
+
         
         try:
             result = subprocess.run(ssh_cmd, capture_output=True, text=True, check=True)
@@ -864,7 +866,7 @@ class LinuxClusterDriver(BaseDriver):
         """Elimina archivo de disco"""
         try:
             server_ip = self.hypervisors[server_name]['ip']
-            ssh_cmd = ['ssh', f'root@{server_ip}', 'rm', '-f', disk_path]
+            ssh_cmd = ['ssh', f'ubuntu@{server_ip}', 'rm', '-f', disk_path]
             
             subprocess.run(ssh_cmd, check=True, capture_output=True)
             logger.info(f"Disk removed: {disk_path}")
@@ -876,7 +878,7 @@ class LinuxClusterDriver(BaseDriver):
         """Obtiene espacio de disco usado en GB"""
         try:
             server_ip = self.hypervisors[server_name]['ip']
-            cmd = ['ssh', f'root@{server_ip}', 'du', '-s', '/var/lib/libvirt/images']
+            cmd = ['ssh', f'ubuntu@{server_ip}', 'du', '-s', '/var/lib/libvirt/images']
             
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
             # Resultado en KB, convertir a GB
