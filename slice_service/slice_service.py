@@ -928,12 +928,30 @@ def deploy_slice(slice_id):
         placement_engine = VMPlacementEngine(db)
         node_list = [dict(node) for node in nodes]
         
+        # Mapear flavors a recursos
+        for node in node_list:
+            flavor_name = node.get('flavor', 'small')
+            if flavor_name in VM_FLAVORS:
+                flavor = VM_FLAVORS[flavor_name]
+                node['cpu'] = flavor['vcpus']
+                node['ram'] = flavor['ram']
+                node['disk'] = flavor['disk']
+            else:
+                # Valores por defecto si el flavor no existe
+                node['cpu'] = 1
+                node['ram'] = 1024
+                node['disk'] = 10
+        
+        logger.info(f"Node list for placement: {node_list}")
+        
         placement_result = placement_engine.calculate_placement(
             node_list,
             slice_data['infrastructure'],
             slice_data['availability_zone'],
             slice_data['placement_policy']
         )
+        
+        logger.info(f"Placement result: {placement_result}")
         
         if not placement_result['success']:
             db.execute('''
@@ -964,9 +982,9 @@ def deploy_slice(slice_id):
                     'name': node['name'],
                     'image': node['image'],
                     'flavor': node['flavor'],
-                    'cpu': 1,  # Mapear desde flavor
-                    'ram': 1024,  # Mapear desde flavor
-                    'disk': 10  # Mapear desde flavor
+                    'cpu': node.get('cpu', 1),
+                    'ram': node.get('ram', 1024),
+                    'disk': node.get('disk', 10)
                 }
                 for node in node_list
             ],
@@ -981,6 +999,8 @@ def deploy_slice(slice_id):
             ]
         }
         
+        logger.info(f"Slice config for driver: {slice_config}")
+        
         # Actualizar estado a 'deploying'
         db.execute('''
             UPDATE slices SET status = 'deploying', updated_at = CURRENT_TIMESTAMP
@@ -993,6 +1013,8 @@ def deploy_slice(slice_id):
         
         deployment_result = driver.deploy_slice(slice_config, placement_result['placement'])
         
+        logger.info(f"Placement calculation result: {placement_result}")
+
         # Actualizar base de datos con resultados
         if deployment_result['status'] == 'success':
             # Actualizar nodos con información de deployment
@@ -1053,6 +1075,28 @@ def deploy_slice(slice_id):
                 'deployment_result': deployment_result
             }), 500
         
+        # Verificar que cada VM tenga un placement válido
+        for vm_config in slice_config.get('nodes', []):
+            vm_name = vm_config['name']
+            
+            if vm_name not in placement_result['placement']:
+                error_msg = f"No placement found for VM {vm_name}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+                continue
+            
+            server_assignment = placement_result['placement'][vm_name]
+            logger.info(f"VM {vm_name} assigned to: {server_assignment}")
+            
+            # Verificar que el assignment tenga la estructura correcta
+            if not isinstance(server_assignment, dict) or 'hostname' not in server_assignment:
+                error_msg = f"Invalid server assignment for VM {vm_name}: {server_assignment}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+                continue
+            
+            server_name = server_assignment['hostname']
+            logger.info(f"Deploying {vm_name} on server {server_name}")
     except Exception as e:
         logger.error(f"Critical error deploying slice {slice_id}: {e}")
         

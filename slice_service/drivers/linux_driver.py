@@ -75,17 +75,17 @@ class LinuxClusterDriver(BaseDriver):
         # Imágenes disponibles
         self.available_images = {
             'ubuntu-20.04': {
-                'path': '/var/lib/libvirt/images/ubuntu-20.04-server.qcow2',
+                'path': '/home/ubuntu/vm-images/ubuntu-20.04-server.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'ubuntu20.04'
             },
             'ubuntu-22.04': {
-                'path': '/var/lib/libvirt/images/ubuntu-22.04-server.qcow2',
+                'path': '/home/ubuntu/vm-images/ubuntu-22.04-server.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'ubuntu22.04'
             },
             'centos-8': {
-                'path': '/var/lib/libvirt/images/centos-8-stream.qcow2',
+                'path': '/home/ubuntu/vm-images/centos-8-stream.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'centos8'
             }
@@ -127,21 +127,21 @@ class LinuxClusterDriver(BaseDriver):
         self.connections.clear()
     
     def create_vm(self, vm_config: Dict, server_name: str, 
-                  slice_id: str = None, networks: List[Dict] = None) -> Dict:
+              slice_id: str = None, networks: List[Dict] = None) -> Dict:
         """
         Crea una VM en el servidor especificado
-        
-        Args:
-            vm_config: Configuración de la VM (name, cpu, ram, disk, image)
-            server_name: Servidor donde crear la VM
-            slice_id: ID del slice al que pertenece
-            networks: Lista de redes a conectar
-            
-        Returns:
-            Dict con información de la VM creada
         """
         conn = None
         try:
+            logger.info(f"Creating VM {vm_config['name']} on server {server_name}")
+            logger.debug(f"VM config: {vm_config}")
+            logger.debug(f"Available hypervisors: {list(self.hypervisors.keys())}")
+            
+            # Verificar que el servidor existe
+            if server_name not in self.hypervisors:
+                available_servers = list(self.hypervisors.keys())
+                raise ValueError(f"Unknown server '{server_name}'. Available servers: {available_servers}")
+            
             conn = self.get_connection(server_name)
             
             # Validar configuración
@@ -173,12 +173,16 @@ class LinuxClusterDriver(BaseDriver):
             return vm_info
             
         except Exception as e:
-            logger.error(f"Failed to create VM {vm_config['name']}: {e}")
+            logger.error(f"Failed to create VM {vm_config['name']} on {server_name}: {e}")
+            logger.error(f"Exception type: {type(e)}")
+            logger.error(f"Exception args: {e.args}")
+            
             # Cleanup en caso de error
             try:
                 self._cleanup_failed_vm(vm_config['name'], server_name)
-            except:
-                pass
+            except Exception as cleanup_error:
+                logger.warning(f"Cleanup failed: {cleanup_error}")
+            
             raise
     
     def delete_vm(self, vm_name: str, server_name: str, 
@@ -377,6 +381,7 @@ class LinuxClusterDriver(BaseDriver):
             
             # 2. Crear VMs según placement
             logger.info(f"Creating VMs for slice {slice_id}")
+            logger.info(f"Placement result: {placement}")  # ← DEBUG: Ver el placement
             for vm_config in slice_config.get('nodes', []):
                 vm_name = vm_config['name']
                 
@@ -388,6 +393,7 @@ class LinuxClusterDriver(BaseDriver):
                 
                 server_assignment = placement[vm_name]
                 server_name = server_assignment['hostname']
+                logger.info(f"Server assignment for {vm_name}: {server_assignment}")
                 
                 try:
                     # Preparar configuración de VM para el driver
@@ -512,6 +518,218 @@ class LinuxClusterDriver(BaseDriver):
     
     # Métodos privados auxiliares
 
+    def _get_vm_info(self, domain, server_name: str, vm_config: Dict) -> Dict:
+        """Obtiene información completa de una VM"""
+        try:
+            # Información básica del dominio
+            vm_info = domain.info()
+            state_names = {
+                libvirt.VIR_DOMAIN_NOSTATE: 'no_state',
+                libvirt.VIR_DOMAIN_RUNNING: 'running', 
+                libvirt.VIR_DOMAIN_BLOCKED: 'blocked',
+                libvirt.VIR_DOMAIN_PAUSED: 'paused',
+                libvirt.VIR_DOMAIN_SHUTDOWN: 'shutdown',
+                libvirt.VIR_DOMAIN_SHUTOFF: 'shutoff',
+                libvirt.VIR_DOMAIN_CRASHED: 'crashed'
+            }
+            
+            # Obtener IP de la VM
+            ip_address = self._get_vm_ip_address(domain)
+            
+            # Obtener puerto VNC
+            vnc_port = self._get_vnc_port(domain)
+            console_url = None
+            if vnc_port:
+                mapped_port = self.hypervisors[server_name]['port']
+                console_url = f"vnc://{self.gateway_ip}:{mapped_port}"
+            
+            # Obtener metadata del slice
+            slice_id = self._get_vm_slice_id(domain)
+            
+            return {
+                'vm_id': domain.UUIDString(),
+                'name': domain.name(),
+                'status': state_names.get(vm_info[0], 'unknown'),
+                'server': server_name,
+                'server_ip': self.hypervisors[server_name]['ip'],
+                'vcpus': vm_info[3],
+                'ram_mb': vm_info[2] // 1024,
+                'max_ram_mb': vm_info[1] // 1024,
+                'cpu_time': vm_info[4],
+                'ip_address': ip_address,
+                'console_url': console_url,
+                'vnc_port': vnc_port,
+                'slice_id': slice_id,
+                'created_at': datetime.utcnow().isoformat(),
+                'is_active': domain.isActive() == 1,
+                'autostart': domain.autostart() == 1
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting VM info: {e}")
+            return {
+                'vm_id': domain.UUIDString() if domain else None,
+                'name': vm_config.get('name', 'unknown'),
+                'status': 'error',
+                'server': server_name,
+                'error': str(e)
+            }
+
+    def _get_vm_ip_address(self, domain) -> Optional[str]:
+        """Obtiene dirección IP de la VM"""
+        try:
+            # Método 1: DHCP leases (más confiable)
+            ifaces = domain.interfaceAddresses(
+                libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_LEASE
+            )
+            
+            for name, iface in ifaces.items():
+                if iface['addrs']:
+                    for addr in iface['addrs']:
+                        if addr['type'] == libvirt.VIR_IP_ADDR_TYPE_IPV4:
+                            return addr['addr']
+            
+            # Método 2: Guest agent (si está disponible)
+            try:
+                ifaces = domain.interfaceAddresses(
+                    libvirt.VIR_DOMAIN_INTERFACE_ADDRESSES_SRC_AGENT
+                )
+                for name, iface in ifaces.items():
+                    if iface['addrs']:
+                        for addr in iface['addrs']:
+                            if addr['type'] == libvirt.VIR_IP_ADDR_TYPE_IPV4:
+                                return addr['addr']
+            except:
+                pass
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Could not get VM IP: {e}")
+            return None
+
+    def _get_vnc_port(self, domain) -> Optional[int]:
+        """Obtiene puerto VNC de la VM"""
+        try:
+            xml_desc = domain.XMLDesc()
+            root = ET.fromstring(xml_desc)
+            
+            graphics = root.find('.//graphics[@type="vnc"]')
+            if graphics is not None:
+                port = graphics.get('port')
+                if port and port != '-1':
+                    return int(port)
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Could not get VNC port: {e}")
+            return None
+
+    def _get_vm_slice_id(self, domain) -> Optional[str]:
+        """Obtiene slice_id del metadata de la VM"""
+        try:
+            xml_desc = domain.XMLDesc()
+            root = ET.fromstring(xml_desc)
+            
+            # Buscar en metadata
+            slice_elem = root.find('.//{http://pucp.edu.pe/orchestrator}slice_id')
+            if slice_elem is not None:
+                return slice_elem.text
+            
+            return None
+            
+        except Exception as e:
+            logger.debug(f"Could not get slice ID: {e}")
+            return None
+
+    def _get_vm_disk_paths(self, domain) -> List[str]:
+        """Obtiene rutas de discos de la VM"""
+        disk_paths = []
+        try:
+            xml_desc = domain.XMLDesc()
+            root = ET.fromstring(xml_desc)
+            
+            disks = root.findall('.//disk[@type="file"]')
+            for disk in disks:
+                source = disk.find('source')
+                if source is not None:
+                    file_path = source.get('file')
+                    if file_path:
+                        disk_paths.append(file_path)
+            
+        except Exception as e:
+            logger.error(f"Error getting disk paths: {e}")
+        
+        return disk_paths
+
+    def _cleanup_failed_vm(self, vm_name: str, server_name: str):
+        """Limpia VM que falló en la creación"""
+        try:
+            conn = self.get_connection(server_name)
+            
+            # Intentar eliminar definición si existe
+            try:
+                domain = conn.lookupByName(vm_name)
+                if domain.isActive():
+                    domain.destroy()
+                domain.undefine()
+            except:
+                pass
+            
+            # Limpiar disco si existe
+            disk_path = f"/home/ubuntu/vm-disks/{vm_name}.qcow2"
+            self._cleanup_disk(disk_path, server_name)
+            
+        except Exception as e:
+            logger.warning(f"Cleanup failed for VM {vm_name}: {e}")
+
+    def _cleanup_slice_deployment(self, deployed_vms: List[Dict], 
+                                created_networks: List[Dict]):
+        """Limpia deployment fallido de slice"""
+        try:
+            logger.info("Cleaning up failed slice deployment")
+            
+            # Eliminar VMs creadas
+            for vm_info in deployed_vms:
+                try:
+                    self.delete_vm(vm_info['name'], vm_info['server'])
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup VM {vm_info['name']}: {e}")
+            
+            # Limpiar redes
+            for network in created_networks:
+                try:
+                    # Cleanup de red
+                    pass
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup network {network['name']}: {e}")
+                    
+        except Exception as e:
+            logger.error(f"Error during cleanup: {e}")
+
+    def _get_used_disk_space(self, server_name: str) -> int:
+        """Obtiene espacio de disco usado en GB"""
+        try:
+            server_hostname = self.hypervisors[server_name]['hostname']
+            cmd = [
+                'ssh', 
+                '-o', 'StrictHostKeyChecking=no',
+                f'ubuntu@{server_hostname}', 
+                'du', '-s', '/home/ubuntu/vm-images'
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            # Resultado en KB, convertir a GB
+            kb_used = int(result.stdout.split()[0])
+            gb_used = kb_used // (1024 * 1024)
+            
+            return gb_used
+            
+        except Exception as e:
+            logger.warning(f"Could not get disk usage for {server_name}: {e}")
+            return 0
+
     def _generate_mac_address(self, vm_name: str, server_name: str) -> str:
         """Genera MAC address única para la VM"""
         # Usar hash del nombre + servidor para generar MAC consistente
@@ -567,6 +785,19 @@ class LinuxClusterDriver(BaseDriver):
             raise ValueError(f"CPU count exceeds server limit")
         if vm_config['ram'] > server_config['max_ram']:
             raise ValueError(f"RAM exceeds server limit")
+    
+    def _cleanup_disk(self, disk_path: str, server_name: str):
+        """Elimina archivo de disco"""
+        try:
+            server_ip = self.hypervisors[server_name]['ip']
+            ssh_cmd = ['ssh', f'ubuntu@{server_ip}', 'rm', '-f', disk_path]
+            
+            subprocess.run(ssh_cmd, check=True, capture_output=True)
+            logger.info(f"Disk removed: {disk_path}")
+            
+        except Exception as e:
+            logger.warning(f"Failed to remove disk {disk_path}: {e}")
+
     
     def _get_compatible_machine_type(self, server_name: str) -> str:
         """Obtiene un tipo de máquina compatible para el servidor"""
@@ -671,7 +902,25 @@ class LinuxClusterDriver(BaseDriver):
         """Prepara disco de la VM"""
         vm_name = vm_config['name']
         base_image = self.available_images[vm_config['image']]['path']
-        vm_disk_path = f"/var/lib/libvirt/images/{vm_name}.qcow2"
+        
+        # Usar directorio del usuario ubuntu con permisos completos
+        vm_disk_path = f"/home/ubuntu/vm-disks/{vm_name}.qcow2"
+        
+        # Crear directorio si no existe
+        server_ip = self.hypervisors[server_name]['ip']
+        
+        # Crear directorio con permisos correctos
+        setup_cmds = [
+            f'mkdir -p /home/ubuntu/vm-disks',
+            f'chmod 755 /home/ubuntu/vm-disks'
+        ]
+        
+        for cmd in setup_cmds:
+            ssh_cmd = ['ssh', f'ubuntu@{server_ip}', cmd]
+            try:
+                subprocess.run(ssh_cmd, capture_output=True, text=True, check=True)
+            except subprocess.CalledProcessError:
+                pass  # Directory might already exist
         
         # Crear disco usando qemu-img con backing file
         cmd = [
@@ -680,11 +929,7 @@ class LinuxClusterDriver(BaseDriver):
             vm_disk_path, f"{vm_config['disk']}G"
         ]
         
-        # Ejecutar comando en el servidor remoto
-        server_ip = self.hypervisors[server_name]['ip']
         ssh_cmd = ['ssh', f'ubuntu@{server_ip}'] + cmd
-
-
         
         try:
             result = subprocess.run(ssh_cmd, capture_output=True, text=True, check=True)
@@ -693,7 +938,7 @@ class LinuxClusterDriver(BaseDriver):
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to create disk: {e.stderr}")
             raise Exception(f"Disk creation failed: {e.stderr}")
-    
+            
     def _generate_vm_xml(self, vm_config: Dict, disk_path: str, 
                         server_name: str, slice_id: str = None, 
                         networks: List[Dict] = None) -> str:
