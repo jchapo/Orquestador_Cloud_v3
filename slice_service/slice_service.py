@@ -196,35 +196,156 @@ def create_default_zones(db):
     
     db.commit()
 
+def load_cluster_config():
+    """Carga configuración real del cluster PUCP"""
+    try:
+        with open('/opt/pucp-orchestrator/cluster_config.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        logger.warning("Cluster config not found, using defaults")
+        return None
+    except Exception as e:
+        logger.error(f"Error loading cluster config: {e}")
+        return None
+
 def create_default_servers(db):
-    """Crea servidores por defecto basados en el proyecto"""
-    default_servers = [
-        # Linux cluster servers
-        ('server1', 'linux', 'zone1-linux', 8, 16384, 100),
-        ('server2', 'linux', 'zone1-linux', 8, 16384, 100),
-        ('server3', 'linux', 'zone2-linux', 8, 16384, 100),
-        ('server4', 'linux', 'zone2-linux', 8, 16384, 100),
-        # OpenStack cluster servers
-        ('headnode', 'openstack', 'zone1-openstack', 16, 32768, 200),
-        ('worker1', 'openstack', 'zone1-openstack', 12, 24576, 150),
-        ('worker2', 'openstack', 'zone2-openstack', 12, 24576, 150),
-        ('worker3', 'openstack', 'zone2-openstack', 12, 24576, 150)
-    ]
+    """Crea servidores basados en configuración real del cluster PUCP"""
     
-    for hostname, infra, zone, vcpus, ram, disk in default_servers:
-        existing = db.execute('SELECT id FROM server_resources WHERE hostname = ?', (hostname,)).fetchone()
-        if not existing:
-            # Obtener zone_id
-            zone_row = db.execute('SELECT id FROM availability_zones WHERE name = ?', (zone,)).fetchone()
-            zone_id = zone_row['id'] if zone_row else None
+    # Intentar cargar configuración real primero
+    cluster_config = load_cluster_config()
+    
+    if cluster_config and 'servers' in cluster_config:
+        logger.info("Loading servers from real cluster configuration")
+        
+        # Usar configuración real del cluster
+        for server_name, server_config in cluster_config['servers'].items():
+            existing = db.execute('SELECT id FROM server_resources WHERE hostname = ?', (server_name,)).fetchone()
+            if not existing:
+                # Determinar zona basada en el servidor
+                if server_name in ['server1', 'server2']:
+                    zone_name = 'zone1-linux'
+                elif server_name in ['server3', 'server4']:
+                    zone_name = 'zone2-linux'
+                else:
+                    zone_name = 'zone1-linux'  # fallback
+                
+                # Obtener zone_id
+                zone_row = db.execute('SELECT id FROM availability_zones WHERE name = ?', (zone_name,)).fetchone()
+                zone_id = zone_row['id'] if zone_row else None
+                
+                # Convertir GB a MB para RAM
+                ram_mb = server_config['ram_gb'] * 1024
+                
+                db.execute('''
+                    INSERT INTO server_resources (id, hostname, infrastructure, availability_zone, 
+                                                total_vcpus, total_ram, total_disk)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    str(uuid.uuid4()), 
+                    server_name, 
+                    'linux',  # Todos los servidores reales son Linux
+                    zone_id, 
+                    server_config['cpus'],
+                    ram_mb,
+                    server_config['storage_gb']
+                ))
+                
+                logger.info(f"Added real server: {server_name} ({server_config['cpus']} CPUs, {server_config['ram_gb']} GB RAM)")
+        
+        db.commit()
+        logger.info("Real cluster servers loaded successfully")
+        
+    else:
+        # Fallback a configuración por defecto si no hay configuración real
+        logger.info("Using default server configuration")
+        
+        default_servers = [
+            # Linux cluster servers (valores por defecto del proyecto)
+            ('server1', 'linux', 'zone1-linux', 8, 16384, 100),
+            ('server2', 'linux', 'zone1-linux', 8, 16384, 100),
+            ('server3', 'linux', 'zone2-linux', 8, 16384, 100),
+            ('server4', 'linux', 'zone2-linux', 8, 16384, 100),
+            # OpenStack cluster servers (para futuro)
+            ('headnode', 'openstack', 'zone1-openstack', 16, 32768, 200),
+            ('worker1', 'openstack', 'zone1-openstack', 12, 24576, 150),
+            ('worker2', 'openstack', 'zone2-openstack', 12, 24576, 150),
+            ('worker3', 'openstack', 'zone2-openstack', 12, 24576, 150)
+        ]
+        
+        for hostname, infra, zone, vcpus, ram, disk in default_servers:
+            existing = db.execute('SELECT id FROM server_resources WHERE hostname = ?', (hostname,)).fetchone()
+            if not existing:
+                # Obtener zone_id
+                zone_row = db.execute('SELECT id FROM availability_zones WHERE name = ?', (zone,)).fetchone()
+                zone_id = zone_row['id'] if zone_row else None
+                
+                db.execute('''
+                    INSERT INTO server_resources (id, hostname, infrastructure, availability_zone, 
+                                                total_vcpus, total_ram, total_disk)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                ''', (str(uuid.uuid4()), hostname, infra, zone_id, vcpus, ram, disk))
+        
+        db.commit()
+        logger.info("Default servers loaded")
+
+def update_real_server_resources(db):
+    """Actualiza recursos de servidores con datos reales del cluster"""
+    cluster_config = load_cluster_config()
+    
+    if not cluster_config or 'servers' not in cluster_config:
+        logger.warning("No real cluster config available for resource update")
+        return
+    
+    logger.info("Updating server resources with real cluster data")
+    
+    for server_name, server_config in cluster_config['servers'].items():
+        try:
+            # Actualizar recursos con datos reales
+            ram_mb = server_config['ram_gb'] * 1024
             
             db.execute('''
-                INSERT INTO server_resources (id, hostname, infrastructure, availability_zone, 
-                                            total_vcpus, total_ram, total_disk)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (str(uuid.uuid4()), hostname, infra, zone_id, vcpus, ram, disk))
+                UPDATE server_resources 
+                SET total_vcpus = ?, total_ram = ?, total_disk = ?, last_updated = CURRENT_TIMESTAMP
+                WHERE hostname = ? AND infrastructure = 'linux'
+            ''', (
+                server_config['cpus'],
+                ram_mb,
+                server_config['storage_gb'],
+                server_name
+            ))
+            
+            logger.info(f"Updated {server_name}: {server_config['cpus']} CPUs, {server_config['ram_gb']} GB RAM")
+            
+        except Exception as e:
+            logger.error(f"Error updating server {server_name}: {e}")
     
     db.commit()
+    logger.info("Server resources updated with real data")
+
+def get_cluster_status():
+    """Obtiene estado actual del cluster real"""
+    cluster_config = load_cluster_config()
+    
+    if not cluster_config:
+        return {
+            'status': 'unknown',
+            'message': 'Cluster configuration not available',
+            'servers': 0
+        }
+    
+    active_servers = [
+        name for name, config in cluster_config['servers'].items()
+        if config.get('status') == 'active'
+    ]
+    
+    return {
+        'status': 'operational' if len(active_servers) >= 3 else 'limited',
+        'total_servers': len(cluster_config['servers']),
+        'active_servers': len(active_servers),
+        'cluster_name': cluster_config.get('cluster_name', 'PUCP Cluster'),
+        'capacity': cluster_config.get('capacity', {}),
+        'last_updated': cluster_config.get('created', 'unknown')
+    }
 
 def token_required(f):
     """Decorador para requerir autenticación"""
@@ -1086,6 +1207,57 @@ def get_resources():
         
     except Exception as e:
         logger.error(f"Get resources error: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/status', methods=['GET'])
+@token_required
+def get_cluster_status_endpoint():
+    """Endpoint para obtener estado del cluster"""
+    try:
+        status = get_cluster_status()
+        
+        # Agregar información de base de datos
+        db = get_db()
+        db_servers = db.execute('''
+            SELECT hostname, infrastructure, total_vcpus, total_ram, total_disk, 
+                   used_vcpus, used_ram, used_disk, last_updated
+            FROM server_resources 
+            WHERE infrastructure = 'linux'
+            ORDER BY hostname
+        ''').fetchall()
+        
+        status['database_servers'] = [dict(server) for server in db_servers]
+        
+        return jsonify(status)
+        
+    except Exception as e:
+        logger.error(f"Error getting cluster status: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/sync', methods=['POST'])
+@token_required
+def sync_cluster_config():
+    """Sincroniza configuración del cluster con la base de datos"""
+    try:
+        # Verificar permisos de admin
+        if 'manage_cluster' not in g.current_user.get('permissions', []):
+            return jsonify({'error': 'Insufficient permissions'}), 403
+        
+        db = get_db()
+        
+        # Actualizar servidores con configuración real
+        update_real_server_resources(db)
+        
+        # Obtener estado actualizado
+        status = get_cluster_status()
+        
+        return jsonify({
+            'message': 'Cluster configuration synchronized successfully',
+            'status': status
+        })
+        
+    except Exception as e:
+        logger.error(f"Error syncing cluster config: {e}")
         return jsonify({'error': 'Internal server error'}), 500
 
 if __name__ == '__main__':
