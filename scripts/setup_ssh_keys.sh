@@ -1,7 +1,7 @@
 #!/bin/bash
 # setup_ssh_keys.sh - Configurar SSH keys para acceso sin contraseña
 
-SERVERS=("server1" "server2" "server3" "server4")
+SERVERS=("server1" "server2" "server3" "server4" "headnode" "worker1" "worker2" "worker3")
 SSH_USER="ubuntu"
 PASSWORD="ubuntu"
 
