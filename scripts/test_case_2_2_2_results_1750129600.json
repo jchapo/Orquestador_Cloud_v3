@@ -1,0 +1,516 @@
+{
+  "case_number": "2.2.2",
+  "objective": "Verificar manejo de escenarios sin recursos suficientes",
+  "start_time": "2025-06-17T03:06:39.762321",
+  "end_time": "2025-06-17T03:06:40.414812",
+  "status": "PASSED",
+  "steps": [
+    {
+      "step": 0,
+      "description": "Prerrequisito: Autenticaci\u00f3n",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:06:40.320642",
+      "details": {}
+    },
+    {
+      "step": 0,
+      "description": "Prerrequisito: Servidores con recursos limitados",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:06:40.349909",
+      "details": {
+        "servers_count": 4
+      }
+    },
+    {
+      "step": 1,
+      "description": "Crear slice con recursos excesivos",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:06:40.368886",
+      "details": {
+        "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+        "status_code": 201
+      }
+    },
+    {
+      "step": 2,
+      "description": "Intentar deployment",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:06:40.400986",
+      "details": {
+        "expected_failure": true,
+        "status_code": 400,
+        "error": {
+          "error": "Insufficient vcpus: required 40, available 32"
+        }
+      }
+    },
+    {
+      "step": 3,
+      "description": "Verificar estado de error",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:06:40.413810",
+      "details": {
+        "status": "error",
+        "error_message": "Insufficient vcpus: required 40, available 32"
+      }
+    },
+    {
+      "step": 4,
+      "description": "Verificar mensaje de error espec\u00edfico",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:06:40.414241",
+      "details": {
+        "error_message": "Insufficient vcpus: required 40, available 32",
+        "contains_resource_info": true
+      }
+    }
+  ],
+  "evidences": [
+    {
+      "type": "authentication",
+      "timestamp": "2025-06-17T03:06:40.320603",
+      "content": {
+        "request": {
+          "username": "testuser",
+          "password": "testpass123"
+        },
+        "response": {
+          "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0dXNlciIsInVzZXJfaWQiOiIyIiwicm9sZSI6InN0dWRlbnQiLCJleHAiOjE3NTAyMTYwMDB9.qAAzZFd8ARgwXihAI9uNclfgz6xbNGXZsg0wvJ5xXYo",
+          "user": {
+            "email": "test@pucp.edu.pe",
+            "id": 2,
+            "role": "student",
+            "username": "testuser"
+          }
+        }
+      }
+    },
+    {
+      "type": "available_resources",
+      "timestamp": "2025-06-17T03:06:40.349820",
+      "content": {
+        "response": {
+          "availability_zones": [
+            {
+              "created_at": "2025-06-03 18:19:47",
+              "description": "Linux Cluster Zone 1",
+              "id": "a2185c72-2653-4675-aa07-1c26acaebd76",
+              "infrastructure": "linux",
+              "is_active": 1,
+              "max_disk": 500,
+              "max_ram": 51200,
+              "max_vcpus": 50,
+              "name": "zone1-linux"
+            },
+            {
+              "created_at": "2025-06-03 18:19:47",
+              "description": "Linux Cluster Zone 2",
+              "id": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+              "infrastructure": "linux",
+              "is_active": 1,
+              "max_disk": 500,
+              "max_ram": 51200,
+              "max_vcpus": 50,
+              "name": "zone2-linux"
+            }
+          ],
+          "servers": [
+            {
+              "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server1",
+              "id": "d35614cc-ed61-4b2e-8519-f48ccf757c67",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone1-linux"
+            },
+            {
+              "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server2",
+              "id": "136e1481-b275-49b7-9cf9-36d5dd26c88a",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone1-linux"
+            },
+            {
+              "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server3",
+              "id": "ff03dc31-aab1-47c2-b861-0e0ebc57c20b",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone2-linux"
+            },
+            {
+              "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server4",
+              "id": "df4622dc-78d6-4a0c-9362-8fd49a505762",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone2-linux"
+            }
+          ],
+          "statistics": {
+            "linux": {
+              "active_servers": 4,
+              "cpu_utilization": 0.0,
+              "disk_utilization": 0.0,
+              "ram_utilization": 0.0,
+              "total_disk": 400,
+              "total_ram": 65536,
+              "total_servers": 4,
+              "total_vcpus": 32,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0
+            }
+          },
+          "vm_flavors": {
+            "large": {
+              "disk": 40,
+              "ram": 8192,
+              "vcpus": 4
+            },
+            "medium": {
+              "disk": 20,
+              "ram": 4096,
+              "vcpus": 2
+            },
+            "micro": {
+              "disk": 5,
+              "ram": 1024,
+              "vcpus": 1
+            },
+            "nano": {
+              "disk": 1,
+              "ram": 512,
+              "vcpus": 1
+            },
+            "small": {
+              "disk": 10,
+              "ram": 2048,
+              "vcpus": 2
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "oversized_slice_request",
+      "timestamp": "2025-06-17T03:06:40.349988",
+      "content": {
+        "payload": {
+          "name": "test-insufficient-resources-1750129600",
+          "description": "Slice que requiere m\u00e1s recursos que los disponibles",
+          "infrastructure": "linux",
+          "placement_policy": "balanced",
+          "nodes": [
+            {
+              "name": "vm-large-1",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            },
+            {
+              "name": "vm-large-2",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            },
+            {
+              "name": "vm-large-3",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            },
+            {
+              "name": "vm-large-4",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            },
+            {
+              "name": "vm-large-5",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            },
+            {
+              "name": "vm-large-6",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            },
+            {
+              "name": "vm-large-7",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            },
+            {
+              "name": "vm-large-8",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            },
+            {
+              "name": "vm-large-9",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            },
+            {
+              "name": "vm-large-10",
+              "image": "ubuntu-20.04",
+              "flavor": "large"
+            }
+          ],
+          "networks": [
+            {
+              "name": "oversized-net",
+              "cidr": "192.168.200.0/24"
+            }
+          ]
+        },
+        "resource_calculation": {
+          "required_vcpus": 40,
+          "available_vcpus": 32,
+          "required_ram": 81920,
+          "available_ram": 65536,
+          "required_disk": 400,
+          "available_disk": 400
+        }
+      }
+    },
+    {
+      "type": "slice_creation_response",
+      "timestamp": "2025-06-17T03:06:40.368853",
+      "content": {
+        "status_code": 201,
+        "response_body": {
+          "id": "b207e472-a340-4321-a26c-81f0b6a21585",
+          "message": "Slice created successfully",
+          "resources": {
+            "total_disk": 400,
+            "total_ram": 81920,
+            "total_vcpus": 40
+          },
+          "status": "draft"
+        }
+      }
+    },
+    {
+      "type": "deployment_attempt",
+      "timestamp": "2025-06-17T03:06:40.400929",
+      "content": {
+        "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+        "request_url": "http://localhost/api/slices/b207e472-a340-4321-a26c-81f0b6a21585/deploy",
+        "response_status": 400,
+        "response_body": "{\"error\":\"Insufficient vcpus: required 40, available 32\"}\n"
+      }
+    },
+    {
+      "type": "slice_status_after_failed_deployment",
+      "timestamp": "2025-06-17T03:06:40.413794",
+      "content": {
+        "slice_data": {
+          "availability_zone": null,
+          "connections": [],
+          "created_at": "2025-06-17 03:06:40",
+          "deleted_at": null,
+          "deployed_at": null,
+          "deployment_data": null,
+          "description": "Slice que requiere m\u00e1s recursos que los disponibles",
+          "error_message": "Insufficient vcpus: required 40, available 32",
+          "id": "b207e472-a340-4321-a26c-81f0b6a21585",
+          "infrastructure": "linux",
+          "name": "test-insufficient-resources-1750129600",
+          "networks": [
+            {
+              "cidr": "192.168.200.0/24",
+              "created_at": "2025-06-17 03:06:40",
+              "dns_servers": "[]",
+              "gateway": null,
+              "id": "4e1c786f-a050-49f4-b625-073afc9272a4",
+              "name": "oversized-net",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vlan_id": null
+            }
+          ],
+          "nodes": [
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "eeef4858-e1a2-46dd-8887-79079e660ed0",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-1",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            },
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "fdd4ef83-2f4e-4c1c-b001-a88e4bed3fab",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-10",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            },
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "ecd7a9f4-1ef7-4b8b-b653-ef5660b66d5e",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-2",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            },
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "d13c9d18-53a7-455a-9d46-55018a543a85",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-3",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            },
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "9cd2300d-b44b-472b-a3d6-c3ed5fbfb337",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-4",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            },
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "53c9984d-7e72-4514-a0e3-46f17f723ffc",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-5",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            },
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "aaee822f-b0e5-4de1-bb28-22c17d672710",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-6",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            },
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "d4447472-7056-4160-8cff-10c588b0a143",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-7",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            },
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "6e8599b7-381b-45f8-8333-cb98ed40d4b8",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-8",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            },
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 03:06:40",
+              "flavor": "large",
+              "id": "ba6a9603-3c08-4c0e-b595-556cb366d96e",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm-large-9",
+              "slice_id": "b207e472-a340-4321-a26c-81f0b6a21585",
+              "status": "pending",
+              "vm_id": null
+            }
+          ],
+          "placement_policy": "balanced",
+          "status": "error",
+          "template_id": null,
+          "total_disk": 400,
+          "total_ram": 81920,
+          "total_vcpus": 40,
+          "updated_at": "2025-06-17 03:06:40",
+          "user_id": "2"
+        },
+        "status": "error",
+        "error_message": "Insufficient vcpus: required 40, available 32"
+      }
+    }
+  ]
+}

@@ -952,6 +952,35 @@ def deploy_slice(slice_id):
         )
         
         logger.info(f"Placement result: {placement_result}")
+
+        # Validar que cada VM tenga un placement válido
+        for vm_config in slice_config.get('nodes', []):
+            vm_name = vm_config['name']
+            
+            if vm_name not in placement_result['placement']:
+                error_msg = f"No placement found for VM {vm_name}"
+                logger.error(error_msg)
+                
+                db.execute('''
+                    UPDATE slices SET status = 'error', error_message = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (error_msg, slice_id))
+                db.commit()
+                return jsonify({'error': error_msg}), 400
+            
+            server_assignment = placement_result['placement'][vm_name]
+            
+            # Verificar estructura del assignment
+            if not isinstance(server_assignment, dict) or 'hostname' not in server_assignment:
+                error_msg = f"Invalid server assignment for VM {vm_name}: {server_assignment}"
+                logger.error(error_msg)
+                
+                db.execute('''
+                    UPDATE slices SET status = 'error', error_message = ?, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = ?
+                ''', (error_msg, slice_id))
+                db.commit()
+                return jsonify({'error': error_msg}), 400
         
         if not placement_result['success']:
             db.execute('''

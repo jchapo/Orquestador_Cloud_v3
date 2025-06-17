@@ -1,0 +1,512 @@
+{
+  "case_number": "2.1.1",
+  "objective": "Verificar creaci\u00f3n de slice con configuraci\u00f3n m\u00ednima v\u00e1lida",
+  "start_time": "2025-06-17T00:50:09.893633",
+  "end_time": "2025-06-17T00:50:10.504071",
+  "status": "PASSED",
+  "steps": [
+    {
+      "step": 0,
+      "description": "Prerrequisito: Autenticaci\u00f3n",
+      "status": "PASS",
+      "timestamp": "2025-06-17T00:50:10.451672",
+      "details": {
+        "username": "testuser",
+        "token_received": true
+      }
+    },
+    {
+      "step": 0,
+      "description": "Prerrequisito: Base de datos",
+      "status": "PASS",
+      "timestamp": "2025-06-17T00:50:10.456001",
+      "details": {
+        "health_status": {
+          "services": [
+            "/api/auth",
+            "/api/slices",
+            "/api/templates",
+            "/api/networks",
+            "/api/images"
+          ],
+          "status": "healthy",
+          "timestamp": "2025-06-17T00:50:10.454645",
+          "version": "1.0.0"
+        }
+      }
+    },
+    {
+      "step": 0,
+      "description": "Prerrequisito: Servidores disponibles",
+      "status": "PASS",
+      "timestamp": "2025-06-17T00:50:10.472807",
+      "details": {
+        "servers_count": 4,
+        "servers": [
+          {
+            "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+            "available_disk": 100,
+            "available_ram": 16384,
+            "available_vcpus": 8,
+            "hostname": "server1",
+            "id": "d35614cc-ed61-4b2e-8519-f48ccf757c67",
+            "infrastructure": "linux",
+            "last_updated": "2025-06-03 18:19:47",
+            "status": "active",
+            "total_disk": 100,
+            "total_ram": 16384,
+            "total_vcpus": 8,
+            "used_disk": 0,
+            "used_ram": 0,
+            "used_vcpus": 0,
+            "zone_name": "zone1-linux"
+          },
+          {
+            "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+            "available_disk": 100,
+            "available_ram": 16384,
+            "available_vcpus": 8,
+            "hostname": "server2",
+            "id": "136e1481-b275-49b7-9cf9-36d5dd26c88a",
+            "infrastructure": "linux",
+            "last_updated": "2025-06-03 18:19:47",
+            "status": "active",
+            "total_disk": 100,
+            "total_ram": 16384,
+            "total_vcpus": 8,
+            "used_disk": 0,
+            "used_ram": 0,
+            "used_vcpus": 0,
+            "zone_name": "zone1-linux"
+          },
+          {
+            "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+            "available_disk": 100,
+            "available_ram": 16384,
+            "available_vcpus": 8,
+            "hostname": "server3",
+            "id": "ff03dc31-aab1-47c2-b861-0e0ebc57c20b",
+            "infrastructure": "linux",
+            "last_updated": "2025-06-03 18:19:47",
+            "status": "active",
+            "total_disk": 100,
+            "total_ram": 16384,
+            "total_vcpus": 8,
+            "used_disk": 0,
+            "used_ram": 0,
+            "used_vcpus": 0,
+            "zone_name": "zone2-linux"
+          },
+          {
+            "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+            "available_disk": 100,
+            "available_ram": 16384,
+            "available_vcpus": 8,
+            "hostname": "server4",
+            "id": "df4622dc-78d6-4a0c-9362-8fd49a505762",
+            "infrastructure": "linux",
+            "last_updated": "2025-06-03 18:19:47",
+            "status": "active",
+            "total_disk": 100,
+            "total_ram": 16384,
+            "total_vcpus": 8,
+            "used_disk": 0,
+            "used_ram": 0,
+            "used_vcpus": 0,
+            "zone_name": "zone2-linux"
+          }
+        ]
+      }
+    },
+    {
+      "step": 1,
+      "description": "POST /slices",
+      "status": "PASS",
+      "timestamp": "2025-06-17T00:50:10.493504",
+      "details": {
+        "status_code": 201
+      }
+    },
+    {
+      "step": 2,
+      "description": "Verificar HTTP 201",
+      "status": "PASS",
+      "timestamp": "2025-06-17T00:50:10.493564",
+      "details": {
+        "expected": 201,
+        "actual": 201
+      }
+    },
+    {
+      "step": 3,
+      "description": "Validar slice_id generado",
+      "status": "PASS",
+      "timestamp": "2025-06-17T00:50:10.493651",
+      "details": {
+        "slice_id": "ef1740d6-a460-42d1-a77a-c7ae2b99c6be"
+      }
+    },
+    {
+      "step": 4,
+      "description": "Verificar recursos calculados",
+      "status": "PASS",
+      "timestamp": "2025-06-17T00:50:10.493689",
+      "details": {
+        "total_vcpus_expected": 2,
+        "total_vcpus_actual": 2,
+        "total_vcpus_match": true,
+        "total_ram_expected": 2048,
+        "total_ram_actual": 2048,
+        "total_ram_match": true,
+        "total_disk_expected": 10,
+        "total_disk_actual": 10,
+        "total_disk_match": true
+      }
+    },
+    {
+      "step": 5,
+      "description": "Verificar estado 'draft'",
+      "status": "PASS",
+      "timestamp": "2025-06-17T00:50:10.493762",
+      "details": {
+        "expected": "draft",
+        "actual": "draft"
+      }
+    },
+    {
+      "step": 6,
+      "description": "Verificar slice en BD",
+      "status": "PASS",
+      "timestamp": "2025-06-17T00:50:10.503923",
+      "details": {
+        "slice_id": "ef1740d6-a460-42d1-a77a-c7ae2b99c6be",
+        "data": {
+          "availability_zone": null,
+          "connections": [],
+          "created_at": "2025-06-17 00:50:10",
+          "deleted_at": null,
+          "deployed_at": null,
+          "deployment_data": null,
+          "description": null,
+          "error_message": null,
+          "id": "ef1740d6-a460-42d1-a77a-c7ae2b99c6be",
+          "infrastructure": "linux",
+          "name": "test-slice-1",
+          "networks": [
+            {
+              "cidr": "192.168.1.0/24",
+              "created_at": "2025-06-17 00:50:10",
+              "dns_servers": "[]",
+              "gateway": null,
+              "id": "1e311241-7361-43aa-89fe-fd06aff9f6b4",
+              "name": "net1",
+              "slice_id": "ef1740d6-a460-42d1-a77a-c7ae2b99c6be",
+              "status": "pending",
+              "vlan_id": null
+            }
+          ],
+          "nodes": [
+            {
+              "assigned_host": null,
+              "console_url": null,
+              "created_at": "2025-06-17 00:50:10",
+              "flavor": "small",
+              "id": "28c7cb92-020f-4828-8735-e67d0013fec7",
+              "image": "ubuntu-20.04",
+              "ip_address": null,
+              "name": "vm1",
+              "slice_id": "ef1740d6-a460-42d1-a77a-c7ae2b99c6be",
+              "status": "pending",
+              "vm_id": null
+            }
+          ],
+          "placement_policy": "balanced",
+          "status": "draft",
+          "template_id": null,
+          "total_disk": 10,
+          "total_ram": 2048,
+          "total_vcpus": 2,
+          "updated_at": "2025-06-17 00:50:10",
+          "user_id": "2"
+        }
+      }
+    }
+  ],
+  "evidences": [
+    {
+      "type": "authentication",
+      "timestamp": "2025-06-17T00:50:10.451611",
+      "content": {
+        "request": {
+          "username": "testuser",
+          "password": "testpass123"
+        },
+        "response": {
+          "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0dXNlciIsInVzZXJfaWQiOiIyIiwicm9sZSI6InN0dWRlbnQiLCJleHAiOjE3NTAyMDc4MTB9.vdMIdlpcGG8bgkpIIpk-xhkkMYFlEMFMKdXoDFrxrLw",
+          "user": {
+            "email": "test@pucp.edu.pe",
+            "id": 2,
+            "role": "student",
+            "username": "testuser"
+          }
+        }
+      }
+    },
+    {
+      "type": "health_check",
+      "timestamp": "2025-06-17T00:50:10.456284",
+      "content": {
+        "services": [
+          "/api/auth",
+          "/api/slices",
+          "/api/templates",
+          "/api/networks",
+          "/api/images"
+        ],
+        "status": "healthy",
+        "timestamp": "2025-06-17T00:50:10.454645",
+        "version": "1.0.0"
+      }
+    },
+    {
+      "type": "available_resources",
+      "timestamp": "2025-06-17T00:50:10.472890",
+      "content": {
+        "availability_zones": [
+          {
+            "created_at": "2025-06-03 18:19:47",
+            "description": "Linux Cluster Zone 1",
+            "id": "a2185c72-2653-4675-aa07-1c26acaebd76",
+            "infrastructure": "linux",
+            "is_active": 1,
+            "max_disk": 500,
+            "max_ram": 51200,
+            "max_vcpus": 50,
+            "name": "zone1-linux"
+          },
+          {
+            "created_at": "2025-06-03 18:19:47",
+            "description": "Linux Cluster Zone 2",
+            "id": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+            "infrastructure": "linux",
+            "is_active": 1,
+            "max_disk": 500,
+            "max_ram": 51200,
+            "max_vcpus": 50,
+            "name": "zone2-linux"
+          }
+        ],
+        "servers": [
+          {
+            "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+            "available_disk": 100,
+            "available_ram": 16384,
+            "available_vcpus": 8,
+            "hostname": "server1",
+            "id": "d35614cc-ed61-4b2e-8519-f48ccf757c67",
+            "infrastructure": "linux",
+            "last_updated": "2025-06-03 18:19:47",
+            "status": "active",
+            "total_disk": 100,
+            "total_ram": 16384,
+            "total_vcpus": 8,
+            "used_disk": 0,
+            "used_ram": 0,
+            "used_vcpus": 0,
+            "zone_name": "zone1-linux"
+          },
+          {
+            "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+            "available_disk": 100,
+            "available_ram": 16384,
+            "available_vcpus": 8,
+            "hostname": "server2",
+            "id": "136e1481-b275-49b7-9cf9-36d5dd26c88a",
+            "infrastructure": "linux",
+            "last_updated": "2025-06-03 18:19:47",
+            "status": "active",
+            "total_disk": 100,
+            "total_ram": 16384,
+            "total_vcpus": 8,
+            "used_disk": 0,
+            "used_ram": 0,
+            "used_vcpus": 0,
+            "zone_name": "zone1-linux"
+          },
+          {
+            "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+            "available_disk": 100,
+            "available_ram": 16384,
+            "available_vcpus": 8,
+            "hostname": "server3",
+            "id": "ff03dc31-aab1-47c2-b861-0e0ebc57c20b",
+            "infrastructure": "linux",
+            "last_updated": "2025-06-03 18:19:47",
+            "status": "active",
+            "total_disk": 100,
+            "total_ram": 16384,
+            "total_vcpus": 8,
+            "used_disk": 0,
+            "used_ram": 0,
+            "used_vcpus": 0,
+            "zone_name": "zone2-linux"
+          },
+          {
+            "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+            "available_disk": 100,
+            "available_ram": 16384,
+            "available_vcpus": 8,
+            "hostname": "server4",
+            "id": "df4622dc-78d6-4a0c-9362-8fd49a505762",
+            "infrastructure": "linux",
+            "last_updated": "2025-06-03 18:19:47",
+            "status": "active",
+            "total_disk": 100,
+            "total_ram": 16384,
+            "total_vcpus": 8,
+            "used_disk": 0,
+            "used_ram": 0,
+            "used_vcpus": 0,
+            "zone_name": "zone2-linux"
+          }
+        ],
+        "statistics": {
+          "linux": {
+            "active_servers": 4,
+            "cpu_utilization": 0.0,
+            "disk_utilization": 0.0,
+            "ram_utilization": 0.0,
+            "total_disk": 400,
+            "total_ram": 65536,
+            "total_servers": 4,
+            "total_vcpus": 32,
+            "used_disk": 0,
+            "used_ram": 0,
+            "used_vcpus": 0
+          }
+        },
+        "vm_flavors": {
+          "large": {
+            "disk": 40,
+            "ram": 8192,
+            "vcpus": 4
+          },
+          "medium": {
+            "disk": 20,
+            "ram": 4096,
+            "vcpus": 2
+          },
+          "micro": {
+            "disk": 5,
+            "ram": 1024,
+            "vcpus": 1
+          },
+          "nano": {
+            "disk": 1,
+            "ram": 512,
+            "vcpus": 1
+          },
+          "small": {
+            "disk": 10,
+            "ram": 2048,
+            "vcpus": 2
+          }
+        }
+      }
+    },
+    {
+      "type": "slice_creation_request",
+      "timestamp": "2025-06-17T00:50:10.493484",
+      "content": {
+        "url": "http://localhost/api/slices",
+        "method": "POST",
+        "payload": {
+          "name": "test-slice-1",
+          "infrastructure": "linux",
+          "nodes": [
+            {
+              "name": "vm1",
+              "image": "ubuntu-20.04",
+              "flavor": "small"
+            }
+          ],
+          "networks": [
+            {
+              "name": "net1",
+              "cidr": "192.168.1.0/24"
+            }
+          ]
+        },
+        "response_status": 201,
+        "response_body": "{\"id\":\"ef1740d6-a460-42d1-a77a-c7ae2b99c6be\",\"message\":\"Slice created successfully\",\"resources\":{\"total_disk\":10,\"total_ram\":2048,\"total_vcpus\":2},\"status\":\"draft\"}\n"
+      }
+    },
+    {
+      "type": "slice_creation_response",
+      "timestamp": "2025-06-17T00:50:10.493789",
+      "content": {
+        "id": "ef1740d6-a460-42d1-a77a-c7ae2b99c6be",
+        "message": "Slice created successfully",
+        "resources": {
+          "total_disk": 10,
+          "total_ram": 2048,
+          "total_vcpus": 2
+        },
+        "status": "draft"
+      }
+    },
+    {
+      "type": "database_verification",
+      "timestamp": "2025-06-17T00:50:10.504015",
+      "content": {
+        "availability_zone": null,
+        "connections": [],
+        "created_at": "2025-06-17 00:50:10",
+        "deleted_at": null,
+        "deployed_at": null,
+        "deployment_data": null,
+        "description": null,
+        "error_message": null,
+        "id": "ef1740d6-a460-42d1-a77a-c7ae2b99c6be",
+        "infrastructure": "linux",
+        "name": "test-slice-1",
+        "networks": [
+          {
+            "cidr": "192.168.1.0/24",
+            "created_at": "2025-06-17 00:50:10",
+            "dns_servers": "[]",
+            "gateway": null,
+            "id": "1e311241-7361-43aa-89fe-fd06aff9f6b4",
+            "name": "net1",
+            "slice_id": "ef1740d6-a460-42d1-a77a-c7ae2b99c6be",
+            "status": "pending",
+            "vlan_id": null
+          }
+        ],
+        "nodes": [
+          {
+            "assigned_host": null,
+            "console_url": null,
+            "created_at": "2025-06-17 00:50:10",
+            "flavor": "small",
+            "id": "28c7cb92-020f-4828-8735-e67d0013fec7",
+            "image": "ubuntu-20.04",
+            "ip_address": null,
+            "name": "vm1",
+            "slice_id": "ef1740d6-a460-42d1-a77a-c7ae2b99c6be",
+            "status": "pending",
+            "vm_id": null
+          }
+        ],
+        "placement_policy": "balanced",
+        "status": "draft",
+        "template_id": null,
+        "total_disk": 10,
+        "total_ram": 2048,
+        "total_vcpus": 2,
+        "updated_at": "2025-06-17 00:50:10",
+        "user_id": "2"
+      }
+    }
+  ]
+}

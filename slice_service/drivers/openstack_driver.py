@@ -30,7 +30,7 @@ class OpenStackDriver(BaseDriver):
         
         # Credenciales (usa las mismas de tu service_passwords)
         self.username = "admin"
-        self.password = None  # Se carga desde env o config
+        self.password = self._load_admin_password()
         self.project_name = "admin"
         self.domain_name = "Default"
         
@@ -53,22 +53,11 @@ class OpenStackDriver(BaseDriver):
         }
     
     def authenticate(self) -> bool:
-        """Autenticar con Keystone"""
-        # Cargar password desde variables de entorno o config
+        """Autenticar con Keystone usando Identity API v3"""
         if not self.password:
-            try:
-                import os
-                # Intentar cargar desde las mismas credenciales de tu instalación
-                admin_pass = os.getenv('ADMIN_PASS')
-                if admin_pass:
-                    self.password = admin_pass
-                else:
-                    # Usar password por defecto o cargar desde archivo
-                    self.password = self._load_admin_password()
-            except:
-                logger.error("No se pudo cargar password de admin")
-                return False
-        
+            logger.error("No se pudo cargar password de admin")
+            return False
+            
         auth_data = {
             "auth": {
                 "identity": {
@@ -102,6 +91,13 @@ class OpenStackDriver(BaseDriver):
                 self.token = response.headers.get('X-Subject-Token')
                 token_data = response.json()
                 self.project_id = token_data['token']['project']['id']
+                
+                # Parsear fecha de expiración
+                expires_at = token_data['token']['expires_at']
+                # Remover Z y agregar timezone info
+                expires_at = expires_at.replace('Z', '+00:00')
+                self.token_expires = datetime.fromisoformat(expires_at)
+                
                 logger.info("✅ OpenStack authentication successful")
                 return True
             else:
@@ -117,13 +113,14 @@ class OpenStackDriver(BaseDriver):
         try:
             # Leer desde el archivo que creaste en tu instalación
             with open('/root/service_passwords', 'r') as f:
-                content = f.read()
-                for line in content.split('\n'):
-                    if 'ADMIN_PASS=' in line:
-                        return line.split('=')[1].strip().replace("'", "")
-        except:
-            pass
-        
+                for line in f:
+                    if 'ADMIN_PASS=' in line and 'export' in line:
+                        # Extraer valor entre comillas
+                        password = line.split('=')[1].strip()
+                        return password.replace("'", "").replace('"', '')
+        except Exception as e:
+            logger.warning(f"No se pudo leer service_passwords: {e}")
+            
         # Password por defecto para desarrollo
         return "openstack123"  # Cambiar por tu password real
     

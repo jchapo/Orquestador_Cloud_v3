@@ -1,0 +1,396 @@
+{
+  "case_number": "2.3.1",
+  "objective": "Verificar conexiones libvirt a servidores del cluster",
+  "start_time": "2025-06-17T03:14:56.460863",
+  "end_time": "2025-06-17T03:15:37.153961",
+  "status": "FAILED_CONNECTION_ANALYSIS",
+  "steps": [
+    {
+      "step": 0,
+      "description": "Prerrequisito: Autenticaci\u00f3n",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:14:57.022570",
+      "details": {}
+    },
+    {
+      "step": 0,
+      "description": "Prerrequisito: Servidores Linux configurados",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:14:57.044914",
+      "details": {
+        "servers_count": 4,
+        "servers": [
+          "server1",
+          "server2",
+          "server3",
+          "server4"
+        ]
+      }
+    },
+    {
+      "step": 0,
+      "description": "Prerrequisito: Servidores activos",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:14:57.044966",
+      "details": {
+        "active_servers": 4,
+        "active_hostnames": [
+          "server1",
+          "server2",
+          "server3",
+          "server4"
+        ]
+      }
+    },
+    {
+      "step": 1,
+      "description": "Crear slice para test de conexiones libvirt",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:14:57.066412",
+      "details": {
+        "slice_id": "b1086488-700d-41f4-a29a-3a976af9a4ef"
+      }
+    },
+    {
+      "step": 2,
+      "description": "Deployment para test de conexiones",
+      "status": "PARTIAL",
+      "timestamp": "2025-06-17T03:15:27.082911",
+      "details": {
+        "status_code": 504,
+        "note": "Deployment iniciado, analizando conexiones"
+      }
+    },
+    {
+      "step": 3,
+      "description": "Verificar conexiones libvirt a m\u00faltiples servidores",
+      "status": "FAIL",
+      "timestamp": "2025-06-17T03:15:37.153833",
+      "details": {
+        "servers_contacted": 0,
+        "expected_minimum": 2
+      }
+    },
+    {
+      "step": 4,
+      "description": "Verificar distribuci\u00f3n entre servidores",
+      "status": "FAIL",
+      "timestamp": "2025-06-17T03:15:37.153874",
+      "details": {
+        "successful_connections": []
+      }
+    },
+    {
+      "step": 5,
+      "description": "Verificar ausencia de errores de conexi\u00f3n",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:15:37.153906",
+      "details": {
+        "failed_connections": 0
+      }
+    }
+  ],
+  "evidences": [
+    {
+      "type": "authentication",
+      "timestamp": "2025-06-17T03:14:57.022533",
+      "content": {
+        "request": {
+          "username": "testuser",
+          "password": "testpass123"
+        },
+        "response": {
+          "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0dXNlciIsInVzZXJfaWQiOiIyIiwicm9sZSI6InN0dWRlbnQiLCJleHAiOjE3NTAyMTY0OTd9.jOeSDc13mK4gB-9kfxqDTViv-SWOxcyoiBCcwVw2ius",
+          "user": {
+            "email": "test@pucp.edu.pe",
+            "id": 2,
+            "role": "student",
+            "username": "testuser"
+          }
+        }
+      }
+    },
+    {
+      "type": "linux_servers_check",
+      "timestamp": "2025-06-17T03:14:57.044822",
+      "content": {
+        "response": {
+          "availability_zones": [
+            {
+              "created_at": "2025-06-03 18:19:47",
+              "description": "Linux Cluster Zone 1",
+              "id": "a2185c72-2653-4675-aa07-1c26acaebd76",
+              "infrastructure": "linux",
+              "is_active": 1,
+              "max_disk": 500,
+              "max_ram": 51200,
+              "max_vcpus": 50,
+              "name": "zone1-linux"
+            },
+            {
+              "created_at": "2025-06-03 18:19:47",
+              "description": "Linux Cluster Zone 2",
+              "id": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+              "infrastructure": "linux",
+              "is_active": 1,
+              "max_disk": 500,
+              "max_ram": 51200,
+              "max_vcpus": 50,
+              "name": "zone2-linux"
+            }
+          ],
+          "servers": [
+            {
+              "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server1",
+              "id": "d35614cc-ed61-4b2e-8519-f48ccf757c67",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone1-linux"
+            },
+            {
+              "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server2",
+              "id": "136e1481-b275-49b7-9cf9-36d5dd26c88a",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone1-linux"
+            },
+            {
+              "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server3",
+              "id": "ff03dc31-aab1-47c2-b861-0e0ebc57c20b",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone2-linux"
+            },
+            {
+              "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server4",
+              "id": "df4622dc-78d6-4a0c-9362-8fd49a505762",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone2-linux"
+            }
+          ],
+          "statistics": {
+            "linux": {
+              "active_servers": 4,
+              "cpu_utilization": 0.0,
+              "disk_utilization": 0.0,
+              "ram_utilization": 0.0,
+              "total_disk": 400,
+              "total_ram": 65536,
+              "total_servers": 4,
+              "total_vcpus": 32,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0
+            }
+          },
+          "vm_flavors": {
+            "large": {
+              "disk": 40,
+              "ram": 8192,
+              "vcpus": 4
+            },
+            "medium": {
+              "disk": 20,
+              "ram": 4096,
+              "vcpus": 2
+            },
+            "micro": {
+              "disk": 5,
+              "ram": 1024,
+              "vcpus": 1
+            },
+            "nano": {
+              "disk": 1,
+              "ram": 512,
+              "vcpus": 1
+            },
+            "small": {
+              "disk": 10,
+              "ram": 2048,
+              "vcpus": 2
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "libvirt_test_slice_request",
+      "timestamp": "2025-06-17T03:14:57.045023",
+      "content": {
+        "payload": {
+          "name": "test-libvirt-connections-1750130097",
+          "description": "Slice para probar conexiones libvirt a servidores",
+          "infrastructure": "linux",
+          "placement_policy": "balanced",
+          "nodes": [
+            {
+              "name": "test-vm1",
+              "image": "ubuntu-20.04",
+              "flavor": "nano"
+            },
+            {
+              "name": "test-vm2",
+              "image": "ubuntu-20.04",
+              "flavor": "nano"
+            },
+            {
+              "name": "test-vm3",
+              "image": "ubuntu-20.04",
+              "flavor": "nano"
+            },
+            {
+              "name": "test-vm4",
+              "image": "ubuntu-20.04",
+              "flavor": "nano"
+            }
+          ],
+          "networks": [
+            {
+              "name": "test-net",
+              "cidr": "192.168.150.0/24"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "libvirt_test_slice_response",
+      "timestamp": "2025-06-17T03:14:57.066381",
+      "content": {
+        "status_code": 201,
+        "response_body": {
+          "id": "b1086488-700d-41f4-a29a-3a976af9a4ef",
+          "message": "Slice created successfully",
+          "resources": {
+            "total_disk": 4,
+            "total_ram": 2048,
+            "total_vcpus": 4
+          },
+          "status": "draft"
+        }
+      }
+    },
+    {
+      "type": "libvirt_deployment_test",
+      "timestamp": "2025-06-17T03:15:27.082869",
+      "content": {
+        "slice_id": "b1086488-700d-41f4-a29a-3a976af9a4ef",
+        "response_status": 504,
+        "response_body": "<html>\r\n<head><title>504 Gateway Time-out</title></head>\r\n<body>\r\n<center><h1>504 Gateway Time-out</h1></center>\r\n<hr><center>nginx/1.18.0 (Ubuntu)</center>\r\n</body>\r\n</html>\r\n"
+      }
+    },
+    {
+      "type": "libvirt_connection_monitoring",
+      "timestamp": "2025-06-17T03:15:37.153701",
+      "content": {
+        "final_status": "active",
+        "nodes": [
+          {
+            "assigned_host": null,
+            "console_url": "vnc://192.168.201.1:5811",
+            "created_at": "2025-06-17 03:14:57",
+            "flavor": "nano",
+            "id": "904c67fc-f42e-40f3-ae05-d9a30ff01b22",
+            "image": "ubuntu-20.04",
+            "ip_address": null,
+            "name": "test-vm1",
+            "slice_id": "b1086488-700d-41f4-a29a-3a976af9a4ef",
+            "status": "running",
+            "vm_id": "429759cd-7f7f-40fe-97da-1fa47621ca78"
+          },
+          {
+            "assigned_host": null,
+            "console_url": "vnc://192.168.201.1:5812",
+            "created_at": "2025-06-17 03:14:57",
+            "flavor": "nano",
+            "id": "9bcf1869-90e8-4ee6-8215-48a2e121b00e",
+            "image": "ubuntu-20.04",
+            "ip_address": null,
+            "name": "test-vm2",
+            "slice_id": "b1086488-700d-41f4-a29a-3a976af9a4ef",
+            "status": "running",
+            "vm_id": "8362c2fd-0e4d-4b65-83dd-16cd075a8870"
+          },
+          {
+            "assigned_host": null,
+            "console_url": "vnc://192.168.201.1:5813",
+            "created_at": "2025-06-17 03:14:57",
+            "flavor": "nano",
+            "id": "01493b06-5ae5-46bf-9254-3b183fe8473b",
+            "image": "ubuntu-20.04",
+            "ip_address": null,
+            "name": "test-vm3",
+            "slice_id": "b1086488-700d-41f4-a29a-3a976af9a4ef",
+            "status": "running",
+            "vm_id": "e82c8f94-9cab-43a6-88ef-d46e6d553d32"
+          },
+          {
+            "assigned_host": null,
+            "console_url": "vnc://192.168.201.1:5814",
+            "created_at": "2025-06-17 03:14:57",
+            "flavor": "nano",
+            "id": "3386dece-8276-4223-8c18-9271cacd8e4e",
+            "image": "ubuntu-20.04",
+            "ip_address": null,
+            "name": "test-vm4",
+            "slice_id": "b1086488-700d-41f4-a29a-3a976af9a4ef",
+            "status": "running",
+            "vm_id": "48b59103-963f-43f4-a5c5-dfa40eafc521"
+          }
+        ]
+      }
+    }
+  ],
+  "connection_analysis": {
+    "servers_contacted": [],
+    "total_servers_used": 0,
+    "successful_connections": [],
+    "failed_connections": [],
+    "connection_attempts": {}
+  }
+}

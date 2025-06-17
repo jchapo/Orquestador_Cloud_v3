@@ -1,0 +1,372 @@
+{
+  "case_number": "2.3.2",
+  "objective": "Verificar lectura de recursos reales del cluster",
+  "start_time": "2025-06-17T03:21:18.505063",
+  "end_time": "2025-06-17T03:21:19.108751",
+  "status": "PASSED",
+  "steps": [
+    {
+      "step": 0,
+      "description": "Prerrequisito: Autenticaci\u00f3n",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:21:19.066513",
+      "details": {}
+    },
+    {
+      "step": 0,
+      "description": "Prerrequisito: Conexiones establecidas",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:21:19.088448",
+      "details": {}
+    },
+    {
+      "step": 1,
+      "description": "Ejecutar get_server_resources()",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:21:19.107348",
+      "details": {
+        "servers_found": 4,
+        "response_status": 200
+      }
+    },
+    {
+      "step": 2,
+      "description": "Verificar datos de CPU, RAM, disk",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:21:19.108037",
+      "details": {
+        "servers_verified": 4,
+        "all_checks_passed": true
+      }
+    },
+    {
+      "step": 3,
+      "description": "Comparar con configuraci\u00f3n esperada",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:21:19.108452",
+      "details": {
+        "servers_compared": 4,
+        "all_matches": true
+      }
+    },
+    {
+      "step": 4,
+      "description": "Validar formato de response",
+      "status": "PASS",
+      "timestamp": "2025-06-17T03:21:19.108589",
+      "details": {
+        "servers_validated": 4,
+        "format_issues": 0
+      }
+    }
+  ],
+  "evidences": [
+    {
+      "type": "authentication",
+      "timestamp": "2025-06-17T03:21:19.066447",
+      "content": {
+        "request": {
+          "username": "testuser",
+          "password": "testpass123"
+        },
+        "response": {
+          "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0dXNlciIsInVzZXJfaWQiOiIyIiwicm9sZSI6InN0dWRlbnQiLCJleHAiOjE3NTAyMTY4Nzl9.Lx0OrOouhUW9zR9R819gyaZJwBYSCsOWXaVR9ZlJ9l0",
+          "user": {
+            "email": "test@pucp.edu.pe",
+            "id": 2,
+            "role": "student",
+            "username": "testuser"
+          }
+        }
+      }
+    },
+    {
+      "type": "get_server_resources_request",
+      "timestamp": "2025-06-17T03:21:19.107154",
+      "content": {
+        "url": "http://localhost/api/resources?infrastructure=linux",
+        "method": "GET"
+      }
+    },
+    {
+      "type": "get_server_resources_response",
+      "timestamp": "2025-06-17T03:21:19.107319",
+      "content": {
+        "status_code": 200,
+        "response_body": {
+          "availability_zones": [
+            {
+              "created_at": "2025-06-03 18:19:47",
+              "description": "Linux Cluster Zone 1",
+              "id": "a2185c72-2653-4675-aa07-1c26acaebd76",
+              "infrastructure": "linux",
+              "is_active": 1,
+              "max_disk": 500,
+              "max_ram": 51200,
+              "max_vcpus": 50,
+              "name": "zone1-linux"
+            },
+            {
+              "created_at": "2025-06-03 18:19:47",
+              "description": "Linux Cluster Zone 2",
+              "id": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+              "infrastructure": "linux",
+              "is_active": 1,
+              "max_disk": 500,
+              "max_ram": 51200,
+              "max_vcpus": 50,
+              "name": "zone2-linux"
+            }
+          ],
+          "servers": [
+            {
+              "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server1",
+              "id": "d35614cc-ed61-4b2e-8519-f48ccf757c67",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone1-linux"
+            },
+            {
+              "availability_zone": "a2185c72-2653-4675-aa07-1c26acaebd76",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server2",
+              "id": "136e1481-b275-49b7-9cf9-36d5dd26c88a",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone1-linux"
+            },
+            {
+              "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server3",
+              "id": "ff03dc31-aab1-47c2-b861-0e0ebc57c20b",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone2-linux"
+            },
+            {
+              "availability_zone": "c3cdffa1-6213-4f56-9c7f-aec45c69a726",
+              "available_disk": 100,
+              "available_ram": 16384,
+              "available_vcpus": 8,
+              "hostname": "server4",
+              "id": "df4622dc-78d6-4a0c-9362-8fd49a505762",
+              "infrastructure": "linux",
+              "last_updated": "2025-06-03 18:19:47",
+              "status": "active",
+              "total_disk": 100,
+              "total_ram": 16384,
+              "total_vcpus": 8,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0,
+              "zone_name": "zone2-linux"
+            }
+          ],
+          "statistics": {
+            "linux": {
+              "active_servers": 4,
+              "cpu_utilization": 0.0,
+              "disk_utilization": 0.0,
+              "ram_utilization": 0.0,
+              "total_disk": 400,
+              "total_ram": 65536,
+              "total_servers": 4,
+              "total_vcpus": 32,
+              "used_disk": 0,
+              "used_ram": 0,
+              "used_vcpus": 0
+            }
+          },
+          "vm_flavors": {
+            "large": {
+              "disk": 40,
+              "ram": 8192,
+              "vcpus": 4
+            },
+            "medium": {
+              "disk": 20,
+              "ram": 4096,
+              "vcpus": 2
+            },
+            "micro": {
+              "disk": 5,
+              "ram": 1024,
+              "vcpus": 1
+            },
+            "nano": {
+              "disk": 1,
+              "ram": 512,
+              "vcpus": 1
+            },
+            "small": {
+              "disk": 10,
+              "ram": 2048,
+              "vcpus": 2
+            }
+          }
+        }
+      }
+    },
+    {
+      "type": "resource_verification",
+      "timestamp": "2025-06-17T03:21:19.108023",
+      "content": {
+        "server1": {
+          "hostname": "server1",
+          "vcpus_check": true,
+          "ram_check": true,
+          "disk_check": true,
+          "data_completeness": true,
+          "issues": []
+        },
+        "server2": {
+          "hostname": "server2",
+          "vcpus_check": true,
+          "ram_check": true,
+          "disk_check": true,
+          "data_completeness": true,
+          "issues": []
+        },
+        "server3": {
+          "hostname": "server3",
+          "vcpus_check": true,
+          "ram_check": true,
+          "disk_check": true,
+          "data_completeness": true,
+          "issues": []
+        },
+        "server4": {
+          "hostname": "server4",
+          "vcpus_check": true,
+          "ram_check": true,
+          "disk_check": true,
+          "data_completeness": true,
+          "issues": []
+        }
+      }
+    },
+    {
+      "type": "configuration_comparison",
+      "timestamp": "2025-06-17T03:21:19.108442",
+      "content": {
+        "server1": {
+          "hostname": "server1",
+          "vcpus": {
+            "expected": 8,
+            "actual": 8,
+            "match": true
+          },
+          "ram_gb": {
+            "expected": 16,
+            "actual": 16.0,
+            "match": true
+          },
+          "disk_gb": {
+            "expected": 100,
+            "actual": 100,
+            "match": true
+          },
+          "overall_match": true
+        },
+        "server2": {
+          "hostname": "server2",
+          "vcpus": {
+            "expected": 8,
+            "actual": 8,
+            "match": true
+          },
+          "ram_gb": {
+            "expected": 16,
+            "actual": 16.0,
+            "match": true
+          },
+          "disk_gb": {
+            "expected": 100,
+            "actual": 100,
+            "match": true
+          },
+          "overall_match": true
+        },
+        "server3": {
+          "hostname": "server3",
+          "vcpus": {
+            "expected": 8,
+            "actual": 8,
+            "match": true
+          },
+          "ram_gb": {
+            "expected": 16,
+            "actual": 16.0,
+            "match": true
+          },
+          "disk_gb": {
+            "expected": 100,
+            "actual": 100,
+            "match": true
+          },
+          "overall_match": true
+        },
+        "server4": {
+          "hostname": "server4",
+          "vcpus": {
+            "expected": 8,
+            "actual": 8,
+            "match": true
+          },
+          "ram_gb": {
+            "expected": 16,
+            "actual": 16.0,
+            "match": true
+          },
+          "disk_gb": {
+            "expected": 100,
+            "actual": 100,
+            "match": true
+          },
+          "overall_match": true
+        }
+      }
+    },
+    {
+      "type": "response_format_validation",
+      "timestamp": "2025-06-17T03:21:19.108580",
+      "content": {
+        "json_structure_valid": true,
+        "required_fields_present": true,
+        "data_types_correct": true,
+        "issues": []
+      }
+    }
+  ],
+  "resource_analysis": {}
+}

@@ -1,0 +1,43 @@
+{
+  "slice_id": "e3a26927-6258-48b9-b94d-3812f478d67c",
+  "verification_start_time": "2025-06-17T00:27:31.103355",
+  "verification_end_time": "2025-06-17T00:27:31.703707",
+  "final_status": "FAILED",
+  "vm_details": [],
+  "logs": [
+    {
+      "timestamp": "2025-06-17T00:27:31.103402",
+      "level": "INFO",
+      "message": "Iniciando verificaci\u00f3n para slice ID: e3a26927-6258-48b9-b94d-3812f478d67c",
+      "details": {}
+    },
+    {
+      "timestamp": "2025-06-17T00:27:31.103518",
+      "level": "INFO",
+      "message": "Intentando autenticar con el orquestador...",
+      "details": {
+        "username": "testuser"
+      }
+    },
+    {
+      "timestamp": "2025-06-17T00:27:31.673577",
+      "level": "INFO",
+      "message": "Autenticaci\u00f3n exitosa.",
+      "details": {
+        "token_received": true
+      }
+    },
+    {
+      "timestamp": "2025-06-17T00:27:31.703502",
+      "level": "ERROR",
+      "message": "Slice con ID 'e3a26927-6258-48b9-b94d-3812f478d67c' no encontrado.",
+      "details": {}
+    },
+    {
+      "timestamp": "2025-06-17T00:27:31.703671",
+      "level": "ERROR",
+      "message": "Verificaci\u00f3n fallida: No se pudieron obtener los detalles del slice.",
+      "details": {}
+    }
+  ]
+}

@@ -1,0 +1,229 @@
+{
+  "case_number": "2.1.2",
+  "objective": "Verificar que la API rechaza la creaci\u00f3n de slices con datos incompletos o inv\u00e1lidos",
+  "start_time": "2025-06-17T01:34:55.737221",
+  "end_time": "2025-06-17T01:34:56.374675",
+  "status": "FAILED",
+  "steps": [
+    {
+      "step": 0,
+      "description": "Prerrequisito: Autenticaci\u00f3n",
+      "status": "PASS",
+      "timestamp": "2025-06-17T01:34:56.315383",
+      "details": {
+        "username": "testuser",
+        "token_received": true
+      }
+    },
+    {
+      "step": 1,
+      "description": "Slice sin nombre: Verificar HTTP 400",
+      "status": "PASS",
+      "timestamp": "2025-06-17T01:34:56.339139",
+      "details": {
+        "expected": 400,
+        "actual": 400
+      }
+    },
+    {
+      "step": 1,
+      "description": "Slice sin nombre: Verificar mensaje de error",
+      "status": "FAIL",
+      "timestamp": "2025-06-17T01:34:56.339249",
+      "details": {
+        "expected_contains": "name is a required field",
+        "actual_response": {
+          "error": "Missing required fields: name"
+        }
+      }
+    },
+    {
+      "step": 2,
+      "description": "Slice con infraestructura inv\u00e1lida: Verificar HTTP 400",
+      "status": "PASS",
+      "timestamp": "2025-06-17T01:34:56.349512",
+      "details": {
+        "expected": 400,
+        "actual": 400
+      }
+    },
+    {
+      "step": 2,
+      "description": "Slice con infraestructura inv\u00e1lida: Verificar mensaje de error",
+      "status": "FAIL",
+      "timestamp": "2025-06-17T01:34:56.349588",
+      "details": {
+        "expected_contains": "Invalid infrastructure",
+        "actual_response": {
+          "error": "Infrastructure must be \"linux\" or \"openstack\""
+        }
+      }
+    },
+    {
+      "step": 3,
+      "description": "Slice con flavor inexistente: Verificar HTTP 400",
+      "status": "PASS",
+      "timestamp": "2025-06-17T01:34:56.359046",
+      "details": {
+        "expected": 400,
+        "actual": 400
+      }
+    },
+    {
+      "step": 3,
+      "description": "Slice con flavor inexistente: Verificar mensaje de error",
+      "status": "FAIL",
+      "timestamp": "2025-06-17T01:34:56.359175",
+      "details": {
+        "expected_contains": "Flavor 'mega' not found",
+        "actual_response": {
+          "error": "Invalid flavor \"mega\" for node 1"
+        }
+      }
+    },
+    {
+      "step": 4,
+      "description": "Slice sin nodos: Verificar HTTP 400",
+      "status": "PASS",
+      "timestamp": "2025-06-17T01:34:56.374539",
+      "details": {
+        "expected": 400,
+        "actual": 400
+      }
+    },
+    {
+      "step": 4,
+      "description": "Slice sin nodos: Verificar mensaje de error",
+      "status": "FAIL",
+      "timestamp": "2025-06-17T01:34:56.374615",
+      "details": {
+        "expected_contains": "nodes must contain at least 1 item",
+        "actual_response": {
+          "error": "At least one node is required"
+        }
+      }
+    }
+  ],
+  "evidences": [
+    {
+      "type": "authentication",
+      "timestamp": "2025-06-17T01:34:56.315326",
+      "content": {
+        "request": {
+          "username": "testuser",
+          "password": "testpass123"
+        },
+        "response": {
+          "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ0ZXN0dXNlciIsInVzZXJfaWQiOiIyIiwicm9sZSI6InN0dWRlbnQiLCJleHAiOjE3NTAyMTA0OTZ9.XstJ3mga_a7m2zLMUmLER4t0WTijBjzu9juXvQlp8Cw",
+          "user": {
+            "email": "test@pucp.edu.pe",
+            "id": 2,
+            "role": "student",
+            "username": "testuser"
+          }
+        }
+      }
+    },
+    {
+      "type": "invalid_payload_request_1",
+      "timestamp": "2025-06-17T01:34:56.339122",
+      "content": {
+        "url": "http://localhost/api/slices",
+        "method": "POST",
+        "payload": {
+          "infrastructure": "linux",
+          "nodes": [
+            {
+              "name": "vm1",
+              "image": "ubuntu-20.04",
+              "flavor": "small"
+            }
+          ],
+          "networks": [
+            {
+              "name": "net1",
+              "cidr": "192.168.1.0/24"
+            }
+          ]
+        },
+        "response_status": 400,
+        "response_body": "{\"error\":\"Missing required fields: name\"}\n"
+      }
+    },
+    {
+      "type": "invalid_payload_request_2",
+      "timestamp": "2025-06-17T01:34:56.349500",
+      "content": {
+        "url": "http://localhost/api/slices",
+        "method": "POST",
+        "payload": {
+          "name": "test-slice-invalid-infra",
+          "infrastructure": "invalid",
+          "nodes": [
+            {
+              "name": "vm1",
+              "image": "ubuntu-20.04",
+              "flavor": "small"
+            }
+          ],
+          "networks": [
+            {
+              "name": "net1",
+              "cidr": "192.168.1.0/24"
+            }
+          ]
+        },
+        "response_status": 400,
+        "response_body": "{\"error\":\"Infrastructure must be \\\"linux\\\" or \\\"openstack\\\"\"}\n"
+      }
+    },
+    {
+      "type": "invalid_payload_request_3",
+      "timestamp": "2025-06-17T01:34:56.359029",
+      "content": {
+        "url": "http://localhost/api/slices",
+        "method": "POST",
+        "payload": {
+          "name": "test-slice-invalid-flavor",
+          "infrastructure": "linux",
+          "nodes": [
+            {
+              "name": "vm1",
+              "image": "ubuntu-20.04",
+              "flavor": "mega"
+            }
+          ],
+          "networks": [
+            {
+              "name": "net1",
+              "cidr": "192.168.1.0/24"
+            }
+          ]
+        },
+        "response_status": 400,
+        "response_body": "{\"error\":\"Invalid flavor \\\"mega\\\" for node 1\"}\n"
+      }
+    },
+    {
+      "type": "invalid_payload_request_4",
+      "timestamp": "2025-06-17T01:34:56.374527",
+      "content": {
+        "url": "http://localhost/api/slices",
+        "method": "POST",
+        "payload": {
+          "name": "test-slice-no-nodes",
+          "infrastructure": "linux",
+          "nodes": [],
+          "networks": [
+            {
+              "name": "net1",
+              "cidr": "192.168.1.0/24"
+            }
+          ]
+        },
+        "response_status": 400,
+        "response_body": "{\"error\":\"At least one node is required\"}\n"
+      }
+    }
+  ]
+}
