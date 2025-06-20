@@ -951,37 +951,12 @@ def deploy_slice(slice_id):
             slice_data['placement_policy']
         )
         
-        logger.info(f"Placement result: {placement_result}")
+        if not placement_result['success']:
+            logger.error(f"Placement failed: {placement_result.get('error')}")
+        else:
+            logger.info(f"Placement result: {placement_result}")
 
-        # Validar que cada VM tenga un placement válido
-        for vm_config in slice_config.get('nodes', []):
-            vm_name = vm_config['name']
-            
-            if vm_name not in placement_result['placement']:
-                error_msg = f"No placement found for VM {vm_name}"
-                logger.error(error_msg)
-                
-                db.execute('''
-                    UPDATE slices SET status = 'error', error_message = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                ''', (error_msg, slice_id))
-                db.commit()
-                return jsonify({'error': error_msg}), 400
-            
-            server_assignment = placement_result['placement'][vm_name]
-            
-            # Verificar estructura del assignment
-            if not isinstance(server_assignment, dict) or 'hostname' not in server_assignment:
-                error_msg = f"Invalid server assignment for VM {vm_name}: {server_assignment}"
-                logger.error(error_msg)
-                
-                db.execute('''
-                    UPDATE slices SET status = 'error', error_message = ?, updated_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                ''', (error_msg, slice_id))
-                db.commit()
-                return jsonify({'error': error_msg}), 400
-        
+
         if not placement_result['success']:
             db.execute('''
                 UPDATE slices SET status = 'error', error_message = ?
@@ -1027,9 +1002,7 @@ def deploy_slice(slice_id):
                 for net in networks
             ]
         }
-        
-        logger.info(f"Slice config for driver: {slice_config}")
-        
+                
         # Actualizar estado a 'deploying'
         db.execute('''
             UPDATE slices SET status = 'deploying', updated_at = CURRENT_TIMESTAMP
@@ -1104,30 +1077,8 @@ def deploy_slice(slice_id):
                 'deployment_result': deployment_result
             }), 500
         
-        # Verificar que cada VM tenga un placement válido
-        for vm_config in slice_config.get('nodes', []):
-            vm_name = vm_config['name']
-            
-            if vm_name not in placement_result['placement']:
-                error_msg = f"No placement found for VM {vm_name}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-                continue
-            
-            server_assignment = placement_result['placement'][vm_name]
-            logger.info(f"VM {vm_name} assigned to: {server_assignment}")
-            
-            # Verificar que el assignment tenga la estructura correcta
-            if not isinstance(server_assignment, dict) or 'hostname' not in server_assignment:
-                error_msg = f"Invalid server assignment for VM {vm_name}: {server_assignment}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-                continue
-            
-            server_name = server_assignment['hostname']
-            logger.info(f"Deploying {vm_name} on server {server_name}")
     except Exception as e:
-        logger.error(f"Critical error deploying slice {slice_id}: {e}")
+        logger.error(f"Critical error deploying3333333 slice {slice_id}: {e}")
         
         # Actualizar estado a error
         try:
@@ -1149,53 +1100,54 @@ def delete_slice(slice_id):
     """Elimina un slice completamente"""
     try:
         db = get_db()
-        
+
         # Verificar propiedad
         slice_data = db.execute('''
             SELECT * FROM slices WHERE id = ? AND user_id = ? AND deleted_at IS NULL
         ''', (slice_id, g.current_user['user_id'])).fetchone()
-        
+
         if not slice_data:
             return jsonify({'error': 'Slice not found or access denied'}), 404
-        
-        # Obtener VMs del slice
-        vms = db.execute('''
-            SELECT * FROM nodes WHERE slice_id = ?
-        ''', (slice_id,)).fetchall()
-        
+
         # Si el slice está desplegado, usar driver para eliminarlo
-        if slice_data['status'] in ['active', 'error'] and vms:
+        if slice_data['status'] in ['active', 'error']:
             try:
                 driver = get_driver(slice_data['infrastructure'])
-                vm_list = [dict(vm) for vm in vms]
-                
+
+                # Cargar resultado de despliegue
+                deployment_result = json.loads(slice_data['deployment_data']) if slice_data['deployment_data'] else {}
+                vm_list = deployment_result.get('deployed_vms', [])
+
+                logger.debug(f"VMs to destroy for slice {slice_id}: {json.dumps(vm_list, indent=2)}")
+
+                # Llamar solo al método del driver, que ahora destruye cada VM
                 destruction_result = driver.destroy_slice(slice_id, vm_list)
-                
+
                 logger.info(f"Slice {slice_id} destruction result: {destruction_result}")
-                
+
             except Exception as e:
                 logger.error(f"Error destroying slice infrastructure: {e}")
-                # Continuar con eliminación de BD aunque falle la infra
-        
+
         # Marcar como eliminado en BD
         db.execute('''
             UPDATE slices 
             SET status = 'deleted', deleted_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
         ''', (slice_id,))
-        
+
         db.commit()
-        
+
         logger.info(f"✓ Slice {slice_id} deleted successfully")
-        
+
         return jsonify({
             'message': 'Slice deleted successfully',
             'slice_id': slice_id
         })
-        
+
     except Exception as e:
         logger.error(f"Error deleting slice {slice_id}: {e}")
         return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/resources', methods=['GET'])
 @token_required
 def get_resources():

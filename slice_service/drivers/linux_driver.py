@@ -452,7 +452,7 @@ class LinuxClusterDriver(BaseDriver):
             return deployment_result
             
         except Exception as e:
-            logger.error(f"Critical error deploying slice {slice_id}: {e}")
+            logger.error(f"Critical error deploying555555 slice {slice_id}: {e}")
             
             # Cleanup en caso de error crítico
             self._cleanup_slice_deployment(deployed_vms, created_networks)
@@ -517,6 +517,41 @@ class LinuxClusterDriver(BaseDriver):
             }
     
     # Métodos privados auxiliares
+
+    def _cleanup_slice_networks(self, networks: list) -> list:
+        errors = []
+
+        for net in networks:
+            if not isinstance(net, dict):
+                error_msg = f"Invalid network entry (not a dict): {net}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+                continue
+
+            try:
+                server_id = net['server_id']
+                zone = net['zone']
+                network_name = net['name']
+            except KeyError as e:
+                error_msg = f"Missing key in network definition: {e}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+                continue
+
+            conn = self._connect(server_id, zone)
+            try:
+                net_obj = conn.networkLookupByName(network_name)
+                if net_obj.isActive():
+                    net_obj.destroy()
+                net_obj.undefine()
+                logger.info(f"✓ Deleted network: {network_name} on {server_id}")
+            except libvirt.libvirtError as e:
+                error_msg = f"Failed to delete network {network_name} on {server_id}: {e}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+
+        return errors
+
 
     def _get_vm_info(self, domain, server_name: str, vm_config: Dict) -> Dict:
         """Obtiene información completa de una VM"""
