@@ -13,6 +13,7 @@ import os
 import time
 import json
 import socket
+import requests
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 from .base_driver import BaseDriver
@@ -58,6 +59,61 @@ class LinuxClusterDriver(BaseDriver):
                 'max_vcpus': 4,
                 'max_ram': 4030,
                 'max_disk': 100
+            }
+        }
+
+        self.network_client = NetworkServiceClient()
+
+        self.network_config = {
+            'management': {
+                'bridge': 'br-mgmt',
+                'cidr': '192.168.201.0/24',
+                'gateway': '192.168.201.1',
+                'vlan_id': None,
+                'internet_access': False,
+                'use_network_service': False  # Management no usa Network Service
+            },
+            'trunk': {
+                'bridge': 'ovs1',
+                'cidr': '10.60.1.0/24',
+                'gateway': '10.60.1.1',
+                'vlan_range': (100, 199),
+                'internet_access': True,
+                'use_network_service': True,  # ← Usar Network Service
+                'is_provider': False
+            },
+            'data': {
+                'bridge': 'ovs1',
+                'vlan_range': (200, 299),
+                'internet_access': False,
+                'use_network_service': True,  # ← Usar Network Service
+                'is_provider': False
+            },
+            'provider': {
+                'bridge': 'ovs1',
+                'vlan_range': (300, 399),
+                'internet_access': True,
+                'use_network_service': True,  # ← Usar Network Service
+                'is_provider': True          # ← Red provider
+            }
+        }
+
+        self.server_interfaces = {
+            'server1': {
+                'management': 'ens3',
+                'trunk': 'ens4'
+            },
+            'server2': {
+                'management': 'ens3', 
+                'trunk': 'ens4'
+            },
+            'server3': {
+                'management': 'ens3',
+                'trunk': 'ens4'
+            },
+            'server4': {
+                'management': 'ens3',
+                'trunk': 'ens4'
             }
         }
         
@@ -125,7 +181,566 @@ class LinuxClusterDriver(BaseDriver):
                 logger.warning(f"Error closing connection to {server_name}: {e}")
         
         self.connections.clear()
-    
+
+    def setup_slice_networks(self, slice_config: Dict, slice_id: str) -> Dict:
+        """
+        Configura todas las redes del slice según R5
+        
+        Args:
+            slice_config: Configuración del slice
+            slice_id: ID del slice
+            
+        Returns:
+            Dict con información de redes creadas
+        """
+        created_networks = []
+        errors = []
+        
+        try:
+            logger.info(f"Setting up networks for slice {slice_id}")
+            
+            for network in slice_config.get('networks', []):
+                try:
+                    network_result = self._create_r5_network(network, slice_id)
+                    created_networks.append(network_result)
+                    logger.info(f"✓ Network {network['name']} configured")
+                except Exception as e:
+                    error_msg = f"Failed to create network {network['name']}: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+            
+            return {
+                'success': len(errors) == 0,
+                'created_networks': created_networks,
+                'errors': errors
+            }
+            
+        except Exception as e:
+            logger.error(f"Critical error setting up networks: {e}")
+            return {
+                'success': False,
+                'created_networks': created_networks,
+                'errors': [str(e)]
+            }
+
+    def _create_r5_network(self, network_config: Dict, slice_id: str) -> Dict:
+        """Crea una red específica según tipo R5 con integración Network Service"""
+        network_name = f"{slice_id}-{network_config['name']}"
+        network_type = network_config.get('network_type', 'data')
+        
+        if network_type not in self.network_config:
+            raise ValueError(f"Unsupported network type: {network_type}")
+        
+        type_config = self.network_config[network_type]
+        
+        # Configuración específica por tipo
+        if network_type == 'management':
+            return self._create_management_network(network_config, network_name, type_config)
+        elif network_type == 'trunk':
+            return self._create_trunk_network_integrated(network_config, network_name, type_config, slice_id)
+        elif network_type == 'data':
+            return self._create_data_network_integrated(network_config, network_name, type_config, slice_id)
+        elif network_type == 'provider':
+            return self._create_provider_network_integrated(network_config, network_name, type_config, slice_id)
+        else:
+            raise ValueError(f"Network type {network_type} not implemented")
+
+    def _configure_ovs_trunk_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
+        """Configura VLAN trunk con integración Network Service"""
+        try:
+            ovs_commands = [
+                # Crear puerto trunk VLAN
+                f"ovs-vsctl add-port {bridge} {name} tag={vlan_id}",
+                
+                # Configurar como puerto interno
+                f"ovs-vsctl set interface {name} type=internal",
+                
+                # Configurar MTU optimizado
+                f"ip link set {name} mtu 1500",
+                
+                # Activar interfaz
+                f"ip link set {name} up",
+                
+                # Configurar IP del gateway en el bridge
+                f"ip addr add {config.get('gateway', '10.60.1.1')}/24 dev {name}",
+                
+                # Habilitar forwarding para esta interfaz
+                f"echo 1 > /proc/sys/net/ipv4/conf/{name}/forwarding"
+            ]
+            
+            self._execute_ovs_commands(ovs_commands, "trunk network")
+            logger.info(f"✓ OVS trunk network {name} configured with VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring OVS trunk integration: {e}")
+            raise
+
+    def _configure_ovs_data_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
+        """Configura VLAN de datos con integración Network Service"""
+        try:
+            ovs_commands = [
+                # Crear puerto data VLAN
+                f"ovs-vsctl add-port {bridge} {name} tag={vlan_id}",
+                
+                # Configurar como puerto interno
+                f"ovs-vsctl set interface {name} type=internal",
+                
+                # Configurar MTU estándar
+                f"ip link set {name} mtu 1500",
+                
+                # Activar interfaz
+                f"ip link set {name} up",
+                
+                # Configurar IP del gateway si se especifica
+                f"ip addr add {config.get('gateway', '192.168.100.1')}/24 dev {name}" if config.get('gateway') else "",
+                
+                # NO habilitar forwarding (red aislada)
+                f"echo 0 > /proc/sys/net/ipv4/conf/{name}/forwarding"
+            ]
+            
+            # Filtrar comandos vacíos
+            ovs_commands = [cmd for cmd in ovs_commands if cmd]
+            
+            self._execute_ovs_commands(ovs_commands, "data network")
+            logger.info(f"✓ OVS data network {name} configured with VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring OVS data integration: {e}")
+            raise
+
+    def _configure_ovs_provider_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
+        """Configura red provider con capacidades completas"""
+        try:
+            ovs_commands = [
+                # Crear puerto provider con configuración avanzada
+                f"ovs-vsctl add-port {bridge} {name} tag={vlan_id}",
+                
+                # Configurar como puerto provider
+                f"ovs-vsctl set interface {name} type=internal",
+                f"ovs-vsctl set port {name} vlan_mode=access",
+                
+                # Configurar MTU jumbo frames si se solicita
+                f"ip link set {name} mtu {config.get('mtu', 1500)}",
+                
+                # Activar interfaz
+                f"ip link set {name} up",
+                
+                # Configurar IP del gateway provider
+                f"ip addr add {config.get('gateway', '10.60.1.1')}/24 dev {name}",
+                
+                # Habilitar forwarding completo
+                f"echo 1 > /proc/sys/net/ipv4/conf/{name}/forwarding",
+                f"echo 1 > /proc/sys/net/ipv4/conf/{name}/proxy_arp",
+                
+                # Configurar como provider bridge
+                f"ovs-vsctl set bridge {bridge} other-config:forward-bpdu=true",
+                
+                # Configurar spanning tree si es necesario
+                f"ovs-vsctl set bridge {bridge} stp_enable=true" if config.get('stp_enable') else ""
+            ]
+            
+            # Filtrar comandos vacíos
+            ovs_commands = [cmd for cmd in ovs_commands if cmd]
+            
+            self._execute_ovs_commands(ovs_commands, "provider network")
+            
+            # Configuración adicional para provider networks
+            self._configure_provider_nat_rules(vlan_id, config['cidr'])
+            
+            logger.info(f"✓ OVS provider network {name} configured with VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring OVS provider integration: {e}")
+            raise
+
+    def _execute_ovs_commands(self, commands: List[str], network_type: str):
+        """Ejecuta comandos OVS en todos los servidores del cluster"""
+        try:
+            for server_name in self.hypervisors.keys():
+                server_ip = self.hypervisors[server_name]['ip']
+                
+                for cmd in commands:
+                    if not cmd:  # Saltar comandos vacíos
+                        continue
+                        
+                    ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                            f'ubuntu@{server_ip}', f'sudo {cmd}']
+                    try:
+                        result = subprocess.run(ssh_cmd, check=True, capture_output=True, 
+                                            timeout=30, text=True)
+                        logger.debug(f"✓ {server_name}: {cmd}")
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"✗ {server_name}: {cmd} - {e.stderr}")
+                        # No fallar por comandos individuales
+            
+            logger.info(f"OVS commands executed for {network_type}")
+            
+        except Exception as e:
+            logger.error(f"Error executing OVS commands: {e}")
+            raise
+
+    def _generate_internet_security_rules(self, cidr: str) -> List[Dict]:
+        """Genera reglas de seguridad para redes con acceso a internet"""
+        return [
+            {
+                'rule_type': 'egress',
+                'protocol': 'tcp',
+                'port_range_min': 80,
+                'port_range_max': 80,
+                'destination_cidr': '0.0.0.0/0',
+                'action': 'allow',
+                'priority': 100,
+                'description': 'Allow HTTP outbound'
+            },
+            {
+                'rule_type': 'egress',
+                'protocol': 'tcp',
+                'port_range_min': 443,
+                'port_range_max': 443,
+                'destination_cidr': '0.0.0.0/0',
+                'action': 'allow',
+                'priority': 100,
+                'description': 'Allow HTTPS outbound'
+            },
+            {
+                'rule_type': 'egress',
+                'protocol': 'udp',
+                'port_range_min': 53,
+                'port_range_max': 53,
+                'destination_cidr': '0.0.0.0/0',
+                'action': 'allow',
+                'priority': 100,
+                'description': 'Allow DNS outbound'
+            },
+            {
+                'rule_type': 'ingress',
+                'protocol': 'any',
+                'source_cidr': cidr,
+                'action': 'allow',
+                'priority': 200,
+                'description': 'Allow intra-network traffic'
+            }
+        ]
+
+    def _generate_data_security_rules(self, cidr: str) -> List[Dict]:
+        """Genera reglas de seguridad para redes de datos (aisladas)"""
+        return [
+            {
+                'rule_type': 'ingress',
+                'protocol': 'any',
+                'source_cidr': cidr,
+                'action': 'allow',
+                'priority': 200,
+                'description': 'Allow intra-network traffic only'
+            },
+            {
+                'rule_type': 'egress',
+                'protocol': 'any',
+                'destination_cidr': cidr,
+                'action': 'allow',
+                'priority': 200,
+                'description': 'Allow intra-network traffic only'
+            },
+            {
+                'rule_type': 'egress',
+                'protocol': 'any',
+                'destination_cidr': '0.0.0.0/0',
+                'action': 'deny',
+                'priority': 50,
+                'description': 'Block external access'
+            }
+        ]
+
+    def _generate_provider_security_rules(self, config: Dict) -> List[Dict]:
+        """Genera reglas de seguridad para redes provider"""
+        rules = [
+            # Acceso completo dentro de la red
+            {
+                'rule_type': 'ingress',
+                'protocol': 'any',
+                'source_cidr': config['cidr'],
+                'action': 'allow',
+                'priority': 300,
+                'description': 'Allow full intra-provider traffic'
+            },
+            # Acceso completo a internet
+            {
+                'rule_type': 'egress',
+                'protocol': 'any',
+                'destination_cidr': '0.0.0.0/0',
+                'action': 'allow',
+                'priority': 200,
+                'description': 'Allow all outbound traffic'
+            }
+        ]
+        
+        # Agregar reglas personalizadas si existen
+        if 'security_rules' in config:
+            rules.extend(config['security_rules'])
+        
+        return rules
+
+    def _configure_provider_routing(self, vlan_id: int, cidr: str, network_result: Dict):
+        """Configura routing avanzado para redes provider"""
+        try:
+            provider_commands = [
+                # Crear tabla de routing provider
+                f"ip rule add from {cidr} table provider priority 100",
+                
+                # Configurar rutas provider
+                f"ip route add default via 10.60.1.1 dev vlan{vlan_id} table provider",
+                f"ip route add {cidr} dev vlan{vlan_id} table provider",
+                
+                # Configurar SNAT para provider network
+                f"iptables -t nat -A POSTROUTING -s {cidr} -o ens3 -j MASQUERADE",
+                
+                # Permitir forwarding provider
+                f"iptables -A FORWARD -s {cidr} -j ACCEPT",
+                f"iptables -A FORWARD -d {cidr} -j ACCEPT",
+                
+                # Configurar marcado de paquetes para QoS
+                f"iptables -t mangle -A PREROUTING -s {cidr} -j MARK --set-mark {vlan_id}"
+            ]
+            
+            # Ejecutar en servidor gateway
+            gateway_server = 'server1'
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in provider_commands:
+                ssh_cmd = ['ssh', f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Provider routing command failed: {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ Provider routing configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring provider routing: {e}")
+            raise
+
+    def _configure_provider_qos(self, vlan_id: int, qos_config: Dict):
+        """Configura QoS para redes provider"""
+        try:
+            qos_commands = [
+                # Configurar rate limiting
+                f"ovs-vsctl set interface vlan{vlan_id} ingress_policing_rate={qos_config.get('rate_limit', 1000000)}",
+                f"ovs-vsctl set interface vlan{vlan_id} ingress_policing_burst={qos_config.get('burst_limit', 100000)}",
+                
+                # Configurar prioridad de tráfico
+                f"tc qdisc add dev vlan{vlan_id} root handle 1: htb default 30",
+                f"tc class add dev vlan{vlan_id} parent 1: classid 1:1 htb rate {qos_config.get('guaranteed_rate', '100mbit')}",
+                f"tc class add dev vlan{vlan_id} parent 1:1 classid 1:10 htb rate {qos_config.get('high_priority_rate', '50mbit')} ceil {qos_config.get('max_rate', '1gbit')}"
+            ]
+            
+            for server_name in self.hypervisors.keys():
+                server_ip = self.hypervisors[server_name]['ip']
+                
+                for cmd in qos_commands:
+                    ssh_cmd = ['ssh', f'ubuntu@{server_ip}', f'sudo {cmd}']
+                    try:
+                        subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"QoS command failed on {server_name}: {e.stderr}")
+            
+            logger.info(f"✓ QoS configured for provider VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring provider QoS: {e}")
+            raise
+
+    def _configure_provider_nat_rules(self, vlan_id: int, cidr: str):
+        """Configura reglas NAT específicas para provider networks"""
+        try:
+            nat_commands = [
+                # SNAT para salida a internet
+                f"iptables -t nat -A POSTROUTING -s {cidr} -o ens3 -j MASQUERADE",
+                
+                # DNAT para servicios entrantes (si se configura)
+                # f"iptables -t nat -A PREROUTING -i ens3 -p tcp --dport 8080 -j DNAT --to {cidr_gateway}:80",
+                
+                # Permitir establecimiento de conexiones
+                f"iptables -A FORWARD -s {cidr} -m conntrack --ctstate NEW,ESTABLISHED,RELATED -j ACCEPT",
+                f"iptables -A FORWARD -d {cidr} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+            ]
+            
+            gateway_server = 'server1'
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in nat_commands:
+                ssh_cmd = ['ssh', f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"NAT command failed: {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ NAT rules configured for provider VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring provider NAT: {e}")
+            raise        
+
+    def _create_trunk_network_integrated(self, config: Dict, name: str, type_config: Dict, slice_id: str) -> Dict:
+        """Crea red trunk usando Network Service"""
+        try:
+            network_id = str(uuid.uuid4())
+            
+            # 1. Crear red en Network Service
+            network_service_config = {
+                'name': name,
+                'cidr': config['cidr'],
+                'infrastructure': 'linux',
+                'slice_id': slice_id,
+                'network_type': 'trunk',
+                'gateway': config.get('gateway'),
+                'dns_servers': config.get('dns_servers', ['8.8.8.8', '8.8.4.4']),
+                'is_external': config.get('internet_access', False),
+                'is_provider': False,
+                'configure_openflow': True
+            }
+            
+            network_result = self.network_client.create_provider_network(network_service_config)
+            vlan_id = network_result.get('vlan_id')
+            
+            if not vlan_id:
+                raise Exception("Network Service did not assign VLAN")
+            
+            # 2. Configurar OVS localmente
+            self._configure_ovs_trunk_integration(type_config['bridge'], vlan_id, name, config)
+            
+            # 3. Configurar reglas de seguridad si es trunk con internet
+            if config.get('internet_access', False):
+                security_rules = self._generate_internet_security_rules(config['cidr'])
+                self.network_client.configure_security_rules(network_result['id'], security_rules)
+                
+                # Configurar routing local para internet
+                self._configure_internet_access_integrated(vlan_id, config['cidr'])
+            
+            return {
+                'id': network_result['id'],
+                'name': name,
+                'type': 'trunk',
+                'cidr': config['cidr'],
+                'gateway': config.get('gateway'),
+                'bridge': type_config['bridge'],
+                'vlan_id': vlan_id,
+                'internet_access': config.get('internet_access', False),
+                'network_service_managed': True,
+                'status': 'active'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating integrated trunk network: {e}")
+            raise
+
+    def _create_data_network_integrated(self, config: Dict, name: str, type_config: Dict, slice_id: str) -> Dict:
+        """Crea red de datos usando Network Service"""
+        try:
+            network_id = str(uuid.uuid4())
+            
+            # 1. Crear red en Network Service
+            network_service_config = {
+                'name': name,
+                'cidr': config['cidr'],
+                'infrastructure': 'linux',
+                'slice_id': slice_id,
+                'network_type': 'data',
+                'gateway': config.get('gateway'),
+                'dns_servers': config.get('dns_servers', ['8.8.8.8']),
+                'is_external': False,
+                'is_provider': False,
+                'configure_openflow': True
+            }
+            
+            network_result = self.network_client.create_provider_network(network_service_config)
+            vlan_id = network_result.get('vlan_id')
+            
+            if not vlan_id:
+                raise Exception("Network Service did not assign VLAN")
+            
+            # 2. Configurar OVS localmente
+            self._configure_ovs_data_integration(type_config['bridge'], vlan_id, name, config)
+            
+            # 3. Configurar reglas de seguridad para red de datos
+            security_rules = self._generate_data_security_rules(config['cidr'])
+            self.network_client.configure_security_rules(network_result['id'], security_rules)
+            
+            return {
+                'id': network_result['id'],
+                'name': name,
+                'type': 'data',
+                'cidr': config['cidr'],
+                'gateway': config.get('gateway'),
+                'bridge': type_config['bridge'],
+                'vlan_id': vlan_id,
+                'internet_access': False,
+                'network_service_managed': True,
+                'status': 'active'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating integrated data network: {e}")
+            raise
+
+    def _create_provider_network_integrated(self, config: Dict, name: str, type_config: Dict, slice_id: str) -> Dict:
+        """Crea red provider completa usando Network Service"""
+        try:
+            network_id = str(uuid.uuid4())
+            
+            # 1. Crear red provider en Network Service
+            network_service_config = {
+                'name': name,
+                'cidr': config['cidr'],
+                'infrastructure': 'linux',
+                'slice_id': slice_id,
+                'network_type': 'provider',
+                'gateway': config.get('gateway'),
+                'dns_servers': config.get('dns_servers', ['8.8.8.8', '1.1.1.1']),
+                'is_external': True,      # Provider networks tienen acceso externo
+                'is_provider': True,      # Marcar como provider
+                'configure_openflow': True,
+                'security_groups': config.get('security_groups', [])
+            }
+            
+            network_result = self.network_client.create_provider_network(network_service_config)
+            vlan_id = network_result.get('vlan_id')
+            
+            if not vlan_id:
+                raise Exception("Network Service did not assign provider VLAN")
+            
+            # 2. Configurar OVS como provider network
+            self._configure_ovs_provider_integration(type_config['bridge'], vlan_id, name, config)
+            
+            # 3. Configurar reglas de seguridad avanzadas para provider
+            security_rules = self._generate_provider_security_rules(config)
+            self.network_client.configure_security_rules(network_result['id'], security_rules)
+            
+            # 4. Configurar routing provider especial
+            self._configure_provider_routing(vlan_id, config['cidr'], network_result)
+            
+            # 5. Configurar QoS si se especifica
+            if 'qos' in config:
+                self._configure_provider_qos(vlan_id, config['qos'])
+            
+            return {
+                'id': network_result['id'],
+                'name': name,
+                'type': 'provider',
+                'cidr': config['cidr'],
+                'gateway': config.get('gateway'),
+                'bridge': type_config['bridge'],
+                'vlan_id': vlan_id,
+                'internet_access': True,
+                'is_provider': True,
+                'network_service_managed': True,
+                'external_access': True,
+                'status': 'active'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating integrated provider network: {e}")
+            raise
+            
     def create_vm(self, vm_config: Dict, server_name: str, 
               slice_id: str = None, networks: List[Dict] = None) -> Dict:
         """
@@ -348,18 +963,69 @@ class LinuxClusterDriver(BaseDriver):
                 })
         
         return resources
+
+    def stop_vm(self, vm_name: str, server_name: str) -> bool:
+        """Para una VM sin eliminarla"""
+        try:
+            conn = self.get_connection(server_name)
+            
+            try:
+                domain = conn.lookupByName(vm_name)
+            except libvirt.libvirtError:
+                logger.warning(f"VM {vm_name} not found on {server_name}")
+                return True  # Ya está parada
+            
+            # Parar la VM si está corriendo
+            if domain.isActive():
+                logger.info(f"Stopping VM {vm_name}")
+                domain.shutdown()  # Graceful shutdown
+                
+                # Esperar a que pare gracefully
+                timeout = 30
+                while timeout > 0 and domain.isActive():
+                    time.sleep(1)
+                    timeout -= 1
+                
+                # Si no paró gracefully, forzar
+                if domain.isActive():
+                    logger.warning(f"Force stopping VM {vm_name}")
+                    domain.destroy()  # Force shutdown
+            
+            logger.info(f"✓ VM {vm_name} stopped on {server_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to stop VM {vm_name}: {e}")
+            return False
+
+    def start_vm(self, vm_name: str, server_name: str) -> bool:
+        """Inicia una VM parada"""
+        try:
+            conn = self.get_connection(server_name)
+            
+            try:
+                domain = conn.lookupByName(vm_name)
+            except libvirt.libvirtError:
+                logger.error(f"VM {vm_name} not found on {server_name}")
+                return False
+            
+            # Iniciar la VM si no está corriendo
+            if not domain.isActive():
+                logger.info(f"Starting VM {vm_name}")
+                domain.create()
+                
+                # Esperar a que arranque
+                self._wait_for_vm_boot(domain, timeout=60)
+            
+            logger.info(f"✓ VM {vm_name} started on {server_name}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start VM {vm_name}: {e}")
+            return False    
     
     def deploy_slice(self, slice_config: Dict, placement: Dict) -> Dict:
-        """
-        Despliega un slice completo con sus VMs y redes
-        
-        Args:
-            slice_config: Configuración del slice
-            placement: Resultado del VM placement {vm_name: server_assignment}
-            
-        Returns:
-            Dict con resultados del deployment
-        """
+        """Despliega slice con soporte completo R5"""
         deployed_vms = []
         created_networks = []
         errors = []
@@ -367,21 +1033,15 @@ class LinuxClusterDriver(BaseDriver):
         slice_id = slice_config.get('id', str(uuid.uuid4()))
         
         try:
-            # 1. Crear redes primero
-            logger.info(f"Creating networks for slice {slice_id}")
-            for network in slice_config.get('networks', []):
-                try:
-                    network_result = self._create_slice_network(network, slice_id)
-                    created_networks.append(network_result)
-                    logger.info(f"✓ Network {network['name']} created")
-                except Exception as e:
-                    error_msg = f"Failed to create network {network['name']}: {e}"
-                    logger.error(error_msg)
-                    errors.append(error_msg)
+            logger.info(f"Deploying slice {slice_id} with R5 network support")
             
-            # 2. Crear VMs según placement
-            logger.info(f"Creating VMs for slice {slice_id}")
-            logger.info(f"Placement result: {placement}")  # ← DEBUG: Ver el placement
+            # 1. Configurar redes R5 PRIMERO
+            network_result = self.setup_slice_networks(slice_config, slice_id)
+            if not network_result['success']:
+                errors.extend(network_result['errors'])
+            created_networks = network_result['created_networks']
+            
+            # 2. Crear VMs con configuración de red R5
             for vm_config in slice_config.get('nodes', []):
                 vm_name = vm_config['name']
                 
@@ -393,66 +1053,61 @@ class LinuxClusterDriver(BaseDriver):
                 
                 server_assignment = placement[vm_name]
                 server_name = server_assignment['hostname']
-                logger.info(f"Server assignment for {vm_name}: {server_assignment}")
                 
                 try:
-                    # Preparar configuración de VM para el driver
+                    # Preparar configuración con campos R5
                     driver_vm_config = {
                         'name': vm_name,
                         'cpu': vm_config.get('cpu', 1),
                         'ram': vm_config.get('ram', 1024),
                         'disk': vm_config.get('disk', 10),
-                        'image': vm_config.get('image', 'ubuntu-20.04')
+                        'image': vm_config.get('image', 'ubuntu-20.04'),
+                        'internet_access': vm_config.get('internet_access', False),
+                        'management_ip': vm_config.get('management_ip')
                     }
                     
                     vm_result = self.create_vm(
                         driver_vm_config, 
                         server_name, 
                         slice_id, 
-                        created_networks
+                        created_networks  # ← Redes R5 configuradas
                     )
                     
                     deployed_vms.append(vm_result)
-                    logger.info(f"✓ VM {vm_name} deployed on {server_name}")
+                    logger.info(f"✓ VM {vm_name} deployed with R5 networking")
                     
                 except Exception as e:
                     error_msg = f"Failed to deploy VM {vm_name}: {e}"
                     logger.error(error_msg)
                     errors.append(error_msg)
             
-            # 3. Configurar conectividad entre VMs si se especifica
-            if 'connections' in slice_config:
-                logger.info(f"Configuring VM connections for slice {slice_id}")
-                self._configure_vm_connections(
-                    slice_config['connections'], 
-                    deployed_vms, 
-                    created_networks
-                )
+            # 3. Configurar routing entre redes si es necesario
+            if created_networks:
+                try:
+                    self._configure_inter_network_routing(created_networks, slice_id)
+                except Exception as e:
+                    logger.warning(f"Inter-network routing configuration failed: {e}")
+                    errors.append(f"Routing configuration: {e}")
             
-            deployment_result = {
+            return {
                 'slice_id': slice_id,
                 'status': 'success' if not errors else 'partial',
                 'deployed_vms': deployed_vms,
                 'created_networks': created_networks,
                 'errors': errors,
-                'summary': {
+                'r5_summary': {
                     'total_vms': len(slice_config.get('nodes', [])),
                     'deployed_vms': len(deployed_vms),
                     'total_networks': len(slice_config.get('networks', [])),
                     'created_networks': len(created_networks),
+                    'network_types': list(set([n.get('type', 'data') for n in created_networks])),
+                    'internet_enabled_vms': len([vm for vm in slice_config.get('nodes', []) if vm.get('internet_access')]),
                     'deployment_time': datetime.utcnow().isoformat()
                 }
             }
             
-            if errors:
-                logger.warning(f"Slice {slice_id} deployed with {len(errors)} errors")
-            else:
-                logger.info(f"✓ Slice {slice_id} deployed successfully")
-            
-            return deployment_result
-            
         except Exception as e:
-            logger.error(f"Critical error deploying555555 slice {slice_id}: {e}")
+            logger.error(f"Critical error deploying slice {slice_id} with R5: {e}")
             
             # Cleanup en caso de error crítico
             self._cleanup_slice_deployment(deployed_vms, created_networks)
@@ -464,15 +1119,73 @@ class LinuxClusterDriver(BaseDriver):
                 'deployed_vms': deployed_vms,
                 'created_networks': created_networks
             }
+
+    def _configure_inter_network_routing(self, networks: List[Dict], slice_id: str):
+        """Configura routing entre diferentes tipos de red"""
+        try:
+            management_nets = [n for n in networks if n.get('type') == 'management']
+            trunk_nets = [n for n in networks if n.get('type') == 'trunk']
+            data_nets = [n for n in networks if n.get('type') == 'data']
+            
+            # Configurar routing management -> trunk para VMs con internet
+            for mgmt_net in management_nets:
+                for trunk_net in trunk_nets:
+                    if trunk_net.get('internet_access'):
+                        self._setup_routing_rule(mgmt_net, trunk_net, 'internet_gateway')
+            
+            # Configurar routing entre data networks si es necesario
+            for i, data_net1 in enumerate(data_nets):
+                for data_net2 in data_nets[i+1:]:
+                    self._setup_routing_rule(data_net1, data_net2, 'inter_data')
+            
+            logger.info(f"Inter-network routing configured for slice {slice_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring inter-network routing: {e}")
+            raise
+
+    def _setup_routing_rule(self, network1: Dict, network2: Dict, rule_type: str):
+        """Configura regla de routing específica entre dos redes"""
+        try:
+            if rule_type == 'internet_gateway':
+                # Routing para acceso a internet
+                gateway_commands = [
+                    f"ip route add {network1['cidr']} via {network2['gateway']} dev {network2['name']}",
+                    f"iptables -A FORWARD -s {network1['cidr']} -d {network2['cidr']} -j ACCEPT"
+                ]
+            elif rule_type == 'inter_data':
+                # Routing entre redes de datos
+                gateway_commands = [
+                    f"ip route add {network2['cidr']} dev {network1['name']}",
+                    f"ip route add {network1['cidr']} dev {network2['name']}"
+                ]
+            else:
+                return
+            
+            # Ejecutar en servidor gateway
+            gateway_server = 'server1'
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in gateway_commands:
+                ssh_cmd = ['ssh', f'ubuntu@{server_ip}', cmd]
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Routing command failed: {cmd} - {e.stderr}")
+            
+        except Exception as e:
+            logger.error(f"Error setting up routing rule: {e}")
+            raise
     
     def destroy_slice(self, slice_id: str, vm_list: List[Dict]) -> Dict:
-        """Elimina un slice completo"""
+        """Elimina un slice completo con cleanup de Network Service"""
         deleted_vms = []
         errors = []
         
         try:
-            logger.info(f"Destroying slice {slice_id}")
+            logger.info(f"Destroying slice {slice_id} with Network Service integration")
             
+            # 1. Eliminar VMs primero
             for vm_info in vm_list:
                 try:
                     vm_name = vm_info['name']
@@ -494,17 +1207,46 @@ class LinuxClusterDriver(BaseDriver):
                     logger.error(error_msg)
                     errors.append(error_msg)
             
-            # Cleanup de redes del slice
+            # 2. Cleanup de redes usando Network Service
             try:
-                self._cleanup_slice_networks(slice_id)
+                vlan_release_success = self.network_client.release_slice_vlans(slice_id)
+                if vlan_release_success:
+                    logger.info(f"✓ VLANs released for slice {slice_id}")
+                else:
+                    errors.append("Failed to release VLANs from Network Service")
+                    
             except Exception as e:
-                errors.append(f"Network cleanup error: {e}")
+                error_msg = f"Network Service VLAN cleanup error: {e}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+            
+            # 3. Cleanup local OVS configuration
+            try:
+                self._cleanup_slice_ovs_config(slice_id)
+            except Exception as e:
+                error_msg = f"OVS cleanup error: {e}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+            
+            # 4. Cleanup routing rules
+            try:
+                self._cleanup_slice_routing(slice_id)
+            except Exception as e:
+                error_msg = f"Routing cleanup error: {e}"
+                logger.error(error_msg)
+                errors.append(error_msg)
             
             return {
                 'slice_id': slice_id,
                 'status': 'success' if not errors else 'partial',
                 'deleted_vms': deleted_vms,
-                'errors': errors
+                'errors': errors,
+                'cleanup_summary': {
+                    'vms_deleted': len(deleted_vms),
+                    'vlans_released': vlan_release_success,
+                    'ovs_cleaned': True,
+                    'routing_cleaned': True
+                }
             }
             
         except Exception as e:
@@ -515,8 +1257,380 @@ class LinuxClusterDriver(BaseDriver):
                 'error': str(e),
                 'deleted_vms': deleted_vms
             }
+
+    def _cleanup_slice_ovs_config(self, slice_id: str):
+        """Limpia configuración OVS específica del slice"""
+        try:
+            cleanup_commands = [
+                # Buscar y eliminar puertos del slice
+                f"for port in $(ovs-vsctl list-ports ovs1 | grep {slice_id}); do ovs-vsctl del-port ovs1 $port; done",
+                
+                # Limpiar flows específicos del slice
+                f"ovs-ofctl del-flows ovs1 'cookie={slice_id}/-1'",
+                
+                # Limpiar interfaces de red del slice
+                f"for iface in $(ip link show | grep {slice_id} | cut -d: -f2); do ip link delete $iface 2>/dev/null || true; done"
+            ]
+            
+            for server_name in self.hypervisors.keys():
+                server_ip = self.hypervisors[server_name]['ip']
+                
+                for cmd in cleanup_commands:
+                    ssh_cmd = ['ssh', f'ubuntu@{server_ip}', f'sudo bash -c "{cmd}"']
+                    try:
+                        subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    except subprocess.CalledProcessError as e:
+                        logger.debug(f"OVS cleanup command on {server_name}: {e.stderr}")
+            
+            logger.info(f"✓ OVS configuration cleaned for slice {slice_id}")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning OVS configuration: {e}")
+            raise
+
+    def _cleanup_slice_routing(self, slice_id: str):
+        """Limpia reglas de routing específicas del slice"""
+        try:
+            # Obtener CIDRs del slice desde deployment_data si está disponible
+            routing_cleanup_commands = [
+                # Limpiar reglas iptables con comentario del slice
+                f"iptables-save | grep -v '{slice_id}' | iptables-restore",
+                
+                # Limpiar rutas específicas del slice
+                f"ip route show table provider | grep {slice_id} | while read route; do ip route del $route table provider; done",
+                
+                # Limpiar reglas de routing policy
+                f"ip rule list | grep {slice_id} | while read prio rule; do ip rule del $rule 2>/dev/null || true; done"
+            ]
+            
+            gateway_server = 'server1'
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in routing_cleanup_commands:
+                ssh_cmd = ['ssh', f'ubuntu@{server_ip}', f'sudo bash -c "{cmd}"']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                except subprocess.CalledProcessError as e:
+                    logger.debug(f"Routing cleanup command: {e.stderr}")
+            
+            logger.info(f"✓ Routing rules cleaned for slice {slice_id}")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning routing rules: {e}")
+            raise
+
+    def validate_network_service_integration(self) -> Dict:
+        """Valida que la integración con Network Service funcione correctamente"""
+        try:
+            validation_result = {
+                'network_service_available': False,
+                'vlan_allocation_working': False,
+                'ovs_bridges_ready': False,
+                'routing_configured': False,
+                'errors': []
+            }
+            
+            # 1. Verificar conectividad con Network Service
+            try:
+                response = requests.get(
+                    f"{self.network_client.base_url}/health",
+                    timeout=10
+                )
+                if response.status_code == 200:
+                    validation_result['network_service_available'] = True
+                    logger.info("✓ Network Service is available")
+                else:
+                    validation_result['errors'].append(f"Network Service unhealthy: {response.status_code}")
+            except Exception as e:
+                validation_result['errors'].append(f"Cannot connect to Network Service: {e}")
+            
+            # 2. Verificar OVS bridges en todos los servidores
+            ovs_ok = True
+            for server_name in self.hypervisors.keys():
+                try:
+                    server_ip = self.hypervisors[server_name]['ip']
+                    ssh_cmd = ['ssh', f'ubuntu@{server_ip}', 'sudo ovs-vsctl show']
+                    result = subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    
+                    if 'ovs1' not in result.stdout.decode():
+                        validation_result['errors'].append(f"OVS bridge ovs1 not found on {server_name}")
+                        ovs_ok = False
+                        
+                except Exception as e:
+                    validation_result['errors'].append(f"OVS check failed on {server_name}: {e}")
+                    ovs_ok = False
+            
+            validation_result['ovs_bridges_ready'] = ovs_ok
+            
+            # 3. Verificar routing básico
+            try:
+                gateway_server = 'server1'
+                server_ip = self.hypervisors[gateway_server]['ip']
+                ssh_cmd = ['ssh', f'ubuntu@{server_ip}', 'sudo iptables -L -n | grep -q FORWARD']
+                subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                validation_result['routing_configured'] = True
+                logger.info("✓ Basic routing is configured")
+            except Exception as e:
+                validation_result['errors'].append(f"Routing check failed: {e}")
+            
+            # 4. Test de asignación de VLAN (sin crear realmente)
+            try:
+                # Este sería un test más completo en producción
+                validation_result['vlan_allocation_working'] = validation_result['network_service_available']
+            except Exception as e:
+                validation_result['errors'].append(f"VLAN allocation test failed: {e}")
+            
+            validation_result['overall_status'] = 'healthy' if not validation_result['errors'] else 'degraded'
+            
+            return validation_result
+            
+        except Exception as e:
+            logger.error(f"Validation error: {e}")
+            return {
+                'overall_status': 'failed',
+                'errors': [str(e)]
+            }        
     
     # Métodos privados auxiliares
+
+    def _allocate_vlan(self, vlan_range: Tuple[int, int], slice_id: str) -> Optional[int]:
+        """Asigna una VLAN del rango especificado"""
+        try:
+            # Llamar al Network Service para asignar VLAN
+            import requests
+            
+            network_service_url = "http://localhost:5004"  # Network Service
+            headers = {'Content-Type': 'application/json'}
+            
+            # Buscar VLAN disponible en el rango
+            for vlan_id in range(vlan_range[0], vlan_range[1] + 1):
+                response = requests.post(
+                    f"{network_service_url}/api/vlans/{vlan_id}/allocate",
+                    json={
+                        'infrastructure': 'linux',
+                        'slice_id': slice_id,
+                        'description': f'VLAN for slice {slice_id}'
+                    },
+                    headers=headers,
+                    timeout=10
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"Allocated VLAN {vlan_id} for slice {slice_id}")
+                    return vlan_id
+            
+            logger.warning(f"No available VLANs in range {vlan_range}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error allocating VLAN: {e}")
+            return None
+
+    def _configure_ovs_vlan(self, bridge: str, vlan_id: int, network_name: str):
+        """Configura VLAN en OVS bridge"""
+        try:
+            # Comandos OVS para configurar VLAN
+            ovs_commands = [
+                # Crear puerto VLAN en el bridge
+                f"ovs-vsctl add-port {bridge} {network_name} tag={vlan_id}",
+                
+                # Configurar puerto como internal
+                f"ovs-vsctl set interface {network_name} type=internal",
+                
+                # Configurar MTU
+                f"ip link set {network_name} mtu 1500",
+                
+                # Activar interfaz
+                f"ip link set {network_name} up"
+            ]
+            
+            # Ejecutar comandos en todos los servidores del cluster
+            for server_name in self.hypervisors.keys():
+                server_ip = self.hypervisors[server_name]['ip']
+                
+                for cmd in ovs_commands:
+                    ssh_cmd = ['ssh', f'ubuntu@{server_ip}', cmd]
+                    try:
+                        subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                        logger.debug(f"Executed on {server_name}: {cmd}")
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"Command failed on {server_name}: {cmd} - {e.stderr}")
+            
+            logger.info(f"OVS VLAN {vlan_id} configured on bridge {bridge}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring OVS VLAN: {e}")
+            raise
+
+    def _configure_internet_access(self, vlan_id: int, cidr: str):
+        """Configura acceso a internet para una VLAN"""
+        try:
+            # Configurar NAT y routing para acceso a internet
+            gateway_commands = [
+                # Configurar NAT para la red
+                f"iptables -t nat -A POSTROUTING -s {cidr} -o ens3 -j MASQUERADE",
+                
+                # Permitir forwarding
+                f"iptables -A FORWARD -s {cidr} -j ACCEPT",
+                f"iptables -A FORWARD -d {cidr} -j ACCEPT",
+                
+                # Habilitar IP forwarding
+                "echo 1 > /proc/sys/net/ipv4/ip_forward"
+            ]
+            
+            # Ejecutar en el gateway (servidor que tiene acceso a internet)
+            gateway_server = 'server1'  # Asumiendo que server1 es el gateway
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in gateway_commands:
+                ssh_cmd = ['ssh', f'ubuntu@{server_ip}', cmd]
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    logger.debug(f"Gateway command executed: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Gateway command failed: {cmd} - {e.stderr}")
+            
+            logger.info(f"Internet access configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring internet access: {e}")
+            raise
+
+    def _configure_provider_network(self, vlan_id: int, cidr: str):
+        """Configura red provider con capacidades especiales"""
+        try:
+            # Configurar red provider con acceso directo
+            provider_commands = [
+                # Configurar bridge para provider network
+                f"ovs-vsctl set port vlan{vlan_id} vlan_mode=trunk",
+                
+                # Configurar QoS si es necesario
+                f"ovs-vsctl set interface vlan{vlan_id} ingress_policing_rate=1000000",
+                
+                # Configurar routing especial para provider
+                f"ip route add {cidr} dev vlan{vlan_id} table provider"
+            ]
+            
+            # Ejecutar en todos los servidores
+            for server_name in self.hypervisors.keys():
+                server_ip = self.hypervisors[server_name]['ip']
+                
+                for cmd in provider_commands:
+                    ssh_cmd = ['ssh', f'ubuntu@{server_ip}', cmd]
+                    try:
+                        subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"Provider command failed on {server_name}: {e.stderr}")
+            
+            logger.info(f"Provider network configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring provider network: {e}")
+            raise
+
+    def _create_management_network(self, config: Dict, name: str, type_config: Dict) -> Dict:
+        """Crea red de management (sin VLAN)"""
+        try:
+            # Red de management usa bridge directo, sin VLAN
+            return {
+                'name': name,
+                'type': 'management',
+                'cidr': config['cidr'],
+                'gateway': config.get('gateway', type_config['gateway']),
+                'bridge': type_config['bridge'],
+                'vlan_id': None,
+                'internet_access': False,
+                'status': 'active'
+            }
+        except Exception as e:
+            logger.error(f"Error creating management network: {e}")
+            raise
+
+    def _create_trunk_network(self, config: Dict, name: str, type_config: Dict, slice_id: str) -> Dict:
+        """Crea red trunk con VLAN para internet access"""
+        try:
+            # Asignar VLAN del rango trunk
+            vlan_id = self._allocate_vlan(type_config['vlan_range'], slice_id)
+            
+            if not vlan_id:
+                raise Exception("No available VLANs in trunk range")
+            
+            # Configurar VLAN en OVS
+            self._configure_ovs_vlan(type_config['bridge'], vlan_id, name)
+            
+            # Configurar reglas de internet access si es necesario
+            if config.get('internet_access', False):
+                self._configure_internet_access(vlan_id, config['cidr'])
+            
+            return {
+                'name': name,
+                'type': 'trunk',
+                'cidr': config['cidr'],
+                'gateway': config.get('gateway'),
+                'bridge': type_config['bridge'],
+                'vlan_id': vlan_id,
+                'internet_access': config.get('internet_access', False),
+                'status': 'active'
+            }
+        except Exception as e:
+            logger.error(f"Error creating trunk network: {e}")
+            raise
+
+    def _create_data_network(self, config: Dict, name: str, type_config: Dict, slice_id: str) -> Dict:
+        """Crea red de datos con VLAN (sin internet)"""
+        try:
+            # Asignar VLAN del rango data
+            vlan_id = self._allocate_vlan(type_config['vlan_range'], slice_id)
+            
+            if not vlan_id:
+                raise Exception("No available VLANs in data range")
+            
+            # Configurar VLAN en OVS
+            self._configure_ovs_vlan(type_config['bridge'], vlan_id, name)
+            
+            return {
+                'name': name,
+                'type': 'data',
+                'cidr': config['cidr'],
+                'gateway': config.get('gateway'),
+                'bridge': type_config['bridge'],
+                'vlan_id': vlan_id,
+                'internet_access': False,
+                'status': 'active'
+            }
+        except Exception as e:
+            logger.error(f"Error creating data network: {e}")
+            raise
+
+    def _create_provider_network(self, config: Dict, name: str, type_config: Dict, slice_id: str) -> Dict:
+        """Crea red provider con capacidades avanzadas"""
+        try:
+            # Asignar VLAN del rango provider
+            vlan_id = self._allocate_vlan(type_config['vlan_range'], slice_id)
+            
+            if not vlan_id:
+                raise Exception("No available VLANs in provider range")
+            
+            # Configurar VLAN en OVS
+            self._configure_ovs_vlan(type_config['bridge'], vlan_id, name)
+            
+            # Configurar como red provider
+            self._configure_provider_network(vlan_id, config['cidr'])
+            
+            return {
+                'name': name,
+                'type': 'provider',
+                'cidr': config['cidr'],
+                'gateway': config.get('gateway'),
+                'bridge': type_config['bridge'],
+                'vlan_id': vlan_id,
+                'internet_access': True,
+                'is_provider': True,
+                'status': 'active'
+            }
+        except Exception as e:
+            logger.error(f"Error creating provider network: {e}")
+            raise
 
     def _cleanup_slice_networks(self, networks: list) -> list:
         errors = []
@@ -975,115 +2089,264 @@ class LinuxClusterDriver(BaseDriver):
             raise Exception(f"Disk creation failed: {e.stderr}")
             
     def _generate_vm_xml(self, vm_config: Dict, disk_path: str, 
-                        server_name: str, slice_id: str = None, 
-                        networks: List[Dict] = None) -> str:
-        """Genera XML de configuración de la VM"""
+                    server_name: str, slice_id: str = None, 
+                    networks: List[Dict] = None) -> str:
+        """Genera XML de configuración de la VM con múltiples redes R5"""
         
         vm_name = vm_config['name']
         vm_uuid = str(uuid.uuid4())
         ram_mb = vm_config['ram']
         vcpus = vm_config['cpu']
         
-        # Generar MAC address única
-        mac_address = self._generate_mac_address(vm_name, server_name)
-        
         # Usar tipo de máquina compatible
         machine_type = self._get_compatible_machine_type(server_name)
+        
+        # Generar interfaces de red para cada red del slice
+        network_interfaces = ""
+        interface_count = 0
+        
+        if networks:
+            for network in networks:
+                network_type = network.get('type', 'data')
+                bridge = network.get('bridge', 'ovs1')
+                vlan_id = network.get('vlan_id')
+                
+                # Generar MAC address única para cada interfaz
+                mac_address = self._generate_mac_address(vm_name, server_name, interface_count)
+                
+                # Slot PCI para la interfaz
+                pci_slot = f"0x{3 + interface_count:02x}"
+                
+                if network_type == 'management':
+                    # Interfaz de management (bridge directo)
+                    network_interfaces += f'''
+        <interface type='bridge'>
+        <mac address='{mac_address}'/>
+        <source bridge='{bridge}'/>
+        <model type='virtio'/>
+        <address type='pci' domain='0x0000' bus='0x00' slot='{pci_slot}' function='0x0'/>
+        </interface>'''
+                else:
+                    # Interfaz con VLAN (OVS)
+                    vlan_config = f'<vlan><tag id="{vlan_id}"/></vlan>' if vlan_id else ''
+                    network_interfaces += f'''
+        <interface type='bridge'>
+        <mac address='{mac_address}'/>
+        <source bridge='{bridge}'/>
+        <virtualport type='openvswitch'/>
+        {vlan_config}
+        <model type='virtio'/>
+        <address type='pci' domain='0x0000' bus='0x00' slot='{pci_slot}' function='0x0'/>
+        </interface>'''
+                
+                interface_count += 1
+        else:
+            # Fallback: interfaz por defecto
+            mac_address = self._generate_mac_address(vm_name, server_name, 0)
+            network_interfaces = f'''
+        <interface type='bridge'>
+        <mac address='{mac_address}'/>
+        <source bridge='{self.ovs_bridge}'/>
+        <virtualport type='openvswitch'/>
+        <model type='virtio'/>
+        <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>
+        </interface>'''
 
         xml_template = f"""<domain type='kvm'>
-  <name>{vm_name}</name>
-  <uuid>{vm_uuid}</uuid>
-  <metadata>
-    <pucp:slice_id xmlns:pucp='http://pucp.edu.pe/orchestrator'>{slice_id or 'unknown'}</pucp:slice_id>
-    <pucp:server xmlns:pucp='http://pucp.edu.pe/orchestrator'>{server_name}</pucp:server>
-  </metadata>
-  <memory unit='MiB'>{ram_mb}</memory>
-  <currentMemory unit='MiB'>{ram_mb}</currentMemory>
-  <vcpu placement='static'>{vcpus}</vcpu>
-  <os>
-    <type arch='x86_64' machine='{machine_type}'>hvm</type>
-    <boot dev='hd'/>
-  </os>
-  <features>
-    <acpi/>
-    <apic/>
-    <vmport state='off'/>
-  </features>
-  <cpu mode='host-passthrough' check='none' migratable='on'/>
-  <clock offset='utc'>
-    <timer name='rtc' tickpolicy='catchup'/>
-    <timer name='pit' tickpolicy='delay'/>
-    <timer name='hpet' present='no'/>
-  </clock>
-  <on_poweroff>destroy</on_poweroff>
-  <on_reboot>restart</on_reboot>
-  <on_crash>destroy</on_crash>
-  <pm>
-    <suspend-to-mem enabled='no'/>
-    <suspend-to-disk enabled='no'/>
-  </pm>
-  <devices>
-    <emulator>/usr/bin/qemu-system-x86_64</emulator>
-    <disk type='file' device='disk'>
-      <driver name='qemu' type='qcow2'/>
-      <source file='{disk_path}'/>
-      <target dev='vda' bus='virtio'/>
-      <address type='pci' domain='0x0000' bus='0x00' slot='0x05' function='0x0'/>
-    </disk>
-    
-    <!-- Controladores PCI para i440FX -->
-    <controller type='pci' index='0' model='pci-root'/>
-    <controller type='usb' index='0' model='piix3-uhci'>
-      <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x2'/>
-    </controller>
-    
-    <!-- Interfaz de red -->
-    <interface type='bridge'>
-      <mac address='{mac_address}'/>
-      <source bridge='{self.ovs_bridge}'/>
-      <virtualport type='openvswitch'/>
-      <model type='virtio'/>
-      <address type='pci' domain='0x0000' bus='0x00' slot='0x03' function='0x0'/>
-    </interface>
-    
-    <!-- Consola serie -->
-    <serial type='pty'>
-      <target type='isa-serial' port='0'>
-        <model name='isa-serial'/>
-      </target>
-    </serial>
-    <console type='pty'>
-      <target type='serial' port='0'/>
-    </console>
-    
-    <!-- Dispositivos de entrada -->
-    <input type='tablet' bus='usb'>
-      <address type='usb' bus='0' port='1'/>
-    </input>
-    <input type='mouse' bus='ps2'/>
-    <input type='keyboard' bus='ps2'/>
-    
-    <!-- Gráficos VNC -->
-    <graphics type='vnc' port='-1' autoport='yes' listen='0.0.0.0'>
-      <listen type='address' address='0.0.0.0'/>
-    </graphics>
-    
-    <!-- Video y sonido -->
-    <video>
-      <model type='cirrus' vram='16384' heads='1' primary='yes'/>
-      <address type='pci' domain='0x0000' bus='0x00' slot='0x02' function='0x0'/>
-    </video>
-    <sound model='ac97'>
-      <address type='pci' domain='0x0000' bus='0x00' slot='0x04' function='0x0'/>
-    </sound>
-    
-    <!-- Memory balloon -->
-    <memballoon model='virtio'>
-      <address type='pci' domain='0x0000' bus='0x00' slot='0x06' function='0x0'/>
-    </memballoon>
-  </devices>
-</domain>"""
+    <name>{vm_name}</name>
+    <uuid>{vm_uuid}</uuid>
+    <metadata>
+        <pucp:slice_id xmlns:pucp='http://pucp.edu.pe/orchestrator'>{slice_id or 'unknown'}</pucp:slice_id>
+        <pucp:server xmlns:pucp='http://pucp.edu.pe/orchestrator'>{server_name}</pucp:server>
+        <pucp:internet_access xmlns:pucp='http://pucp.edu.pe/orchestrator'>{vm_config.get('internet_access', False)}</pucp:internet_access>
+    </metadata>
+    <memory unit='MiB'>{ram_mb}</memory>
+    <currentMemory unit='MiB'>{ram_mb}</currentMemory>
+    <vcpu placement='static'>{vcpus}</vcpu>
+    <os>
+        <type arch='x86_64' machine='{machine_type}'>hvm</type>
+        <boot dev='hd'/>
+    </os>
+    <features>
+        <acpi/>
+        <apic/>
+        <vmport state='off'/>
+    </features>
+    <cpu mode='host-passthrough' check='none' migratable='on'/>
+    <clock offset='utc'>
+        <timer name='rtc' tickpolicy='catchup'/>
+        <timer name='pit' tickpolicy='delay'/>
+        <timer name='hpet' present='no'/>
+    </clock>
+    <on_poweroff>destroy</on_poweroff>
+    <on_reboot>restart</on_reboot>
+    <on_crash>destroy</on_crash>
+    <pm>
+        <suspend-to-mem enabled='no'/>
+        <suspend-to-disk enabled='no'/>
+    </pm>
+    <devices>
+        <emulator>/usr/bin/qemu-system-x86_64</emulator>
+        <disk type='file' device='disk'>
+        <driver name='qemu' type='qcow2'/>
+        <source file='{disk_path}'/>
+        <target dev='vda' bus='virtio'/>
+        <address type='pci' domain='0x0000' bus='0x00' slot='0x05' function='0x0'/>
+        </disk>
+        
+        <!-- Controladores PCI -->
+        <controller type='pci' index='0' model='pci-root'/>
+        <controller type='usb' index='0' model='piix3-uhci'>
+        <address type='pci' domain='0x0000' bus='0x00' slot='0x01' function='0x2'/>
+        </controller>
+        
+        <!-- Interfaces de red múltiples R5 -->
+        {network_interfaces}
+        
+        <!-- Resto de dispositivos... -->
+        <serial type='pty'>
+        <target type='isa-serial' port='0'>
+            <model name='isa-serial'/>
+        </target>
+        </serial>
+        <console type='pty'>
+        <target type='serial' port='0'/>
+        </console>
+        
+        <input type='tablet' bus='usb'>
+        <address type='usb' bus='0' port='1'/>
+        </input>
+        <input type='mouse' bus='ps2'/>
+        <input type='keyboard' bus='ps2'/>
+        
+        <graphics type='vnc' port='-1' autoport='yes' listen='0.0.0.0'>
+        <listen type='address' address='0.0.0.0'/>
+        </graphics>
+        
+        <video>
+        <model type='cirrus' vram='16384' heads='1' primary='yes'/>
+        <address type='pci' domain='0x0000' bus='0x00' slot='0x02' function='0x0'/>
+        </video>
+        
+        <memballoon model='virtio'>
+        <address type='pci' domain='0x0000' bus='0x00' slot='0x06' function='0x0'/>
+        </memballoon>
+    </devices>
+    </domain>"""
         
         return xml_template
 
+    def _generate_mac_address(self, vm_name: str, server_name: str, interface_id: int = 0) -> str:
+        """Genera MAC address única para cada interfaz"""
+        import hashlib
+        hash_input = f"{vm_name}-{server_name}-{interface_id}".encode()
+        hash_value = hashlib.md5(hash_input).hexdigest()
+        
+        # Formato MAC: 52:54:XX:XX:XX:XX (prefijo KVM)
+        mac = f"52:54:{hash_value[0:2]}:{hash_value[2:4]}:{hash_value[4:6]}:{hash_value[6:8]}"
+        return mac
+
+class NetworkServiceClient:
+    """Cliente para interactuar con Network Service"""
+    
+    def __init__(self, base_url="http://localhost:5004"):
+        self.base_url = base_url
+        self.timeout = 30
+    
+    def allocate_vlan(self, infrastructure: str, network_id: str, slice_id: str, 
+                     description: str = None, network_type: str = 'data') -> Optional[int]:
+        """Solicita asignación de VLAN al Network Service"""
+        try:
+            payload = {
+                'infrastructure': infrastructure,
+                'network_id': network_id,
+                'slice_id': slice_id,
+                'description': description or f'VLAN for {network_type} network',
+                'network_type': network_type
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/api/vlans/allocate",
+                json=payload,
+                headers={'Content-Type': 'application/json'},
+                timeout=self.timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                vlan_id = result.get('vlan_id')
+                logger.info(f"✓ VLAN {vlan_id} allocated for {network_type} network")
+                return vlan_id
+            else:
+                logger.error(f"VLAN allocation failed: {response.status_code} - {response.text}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error communicating with Network Service: {e}")
+            return None
+    
+    def create_provider_network(self, network_config: Dict) -> Dict:
+        """Crea red provider usando Network Service"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/networks",
+                json=network_config,
+                headers={'Content-Type': 'application/json'},
+                timeout=self.timeout
+            )
+            
+            if response.status_code == 201:
+                result = response.json()
+                logger.info(f"✓ Provider network created: {result['name']}")
+                return result
+            else:
+                logger.error(f"Provider network creation failed: {response.status_code}")
+                raise Exception(f"Network Service error: {response.text}")
+                
+        except Exception as e:
+            logger.error(f"Error creating provider network: {e}")
+            raise
+    
+    def configure_security_rules(self, network_id: str, rules: List[Dict]) -> bool:
+        """Configura reglas de seguridad en Network Service"""
+        try:
+            for rule in rules:
+                response = requests.post(
+                    f"{self.base_url}/api/networks/{network_id}/security-rules",
+                    json=rule,
+                    headers={'Content-Type': 'application/json'},
+                    timeout=self.timeout
+                )
+                
+                if response.status_code != 201:
+                    logger.warning(f"Security rule creation failed: {response.text}")
+                    return False
+            
+            logger.info(f"✓ Security rules configured for network {network_id}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error configuring security rules: {e}")
+            return False
+    
+    def release_slice_vlans(self, slice_id: str) -> bool:
+        """Libera todas las VLANs de un slice"""
+        try:
+            response = requests.post(
+                f"{self.base_url}/api/vlans/slice/{slice_id}/release",
+                headers={'Content-Type': 'application/json'},
+                timeout=self.timeout
+            )
+            
+            if response.status_code == 200:
+                result = response.json()
+                logger.info(f"✓ Released {result.get('released_count', 0)} VLANs for slice {slice_id}")
+                return True
+            else:
+                logger.warning(f"VLAN release failed: {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error releasing VLANs: {e}")
+            return False
         

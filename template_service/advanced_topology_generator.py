@@ -374,35 +374,38 @@ class AdvancedTopologyGenerator:
         return topology
     
     def convert_to_slice_format(self, topology: Dict) -> Dict:
-        """
-        Convierte topología a formato compatible con slice_service
-        """
-        slice_data = {
-            "name": topology["name"],
-            "description": f"Generated {topology['topology_type']} topology",
-            "infrastructure": topology["infrastructure"],
-            "vms": [],
-            "networks": topology["networks"],
-            "connections": topology["connections"]
+        """Convierte topología al formato esperado por slice_service"""
+        slice_format = {
+            "name": topology.get("name", "generated_topology"),
+            "description": topology.get("description", "Generated topology"),
+            "infrastructure": topology.get("infrastructure", "linux"),
+            "nodes": [
+                {
+                    "name": vm["name"],
+                    "flavor": self._map_flavor_from_resources(vm["flavor"]),
+                    "image": vm["image"]
+                }
+                for vm in topology["vms"]
+            ],
+            "networks": topology.get("networks", []),
+            "connections": topology.get("connections", [])
         }
         
-        # Convertir VMs al formato de slice_service
-        for vm in topology["vms"]:
-            slice_vm = {
-                "name": vm["name"],
-                "cpu": vm["flavor"]["cpu"],
-                "ram": vm["flavor"]["ram"],
-                "disk": vm["flavor"]["disk"],
-                "image_id": vm["image"]
-            }
-            slice_data["vms"].append(slice_vm)
+        return slice_format
+
+    def _map_flavor_from_resources(self, flavor_dict: Dict) -> str:
+        """Mapea recursos a nombre de flavor"""
+        ram = flavor_dict.get("ram", 1024)
         
-        # Agregar configuración de internet si está habilitada
-        if topology["settings"]["enable_internet"]:
-            slice_data["vm_internet_access"] = topology["vm_internet_access"]
-        
-        return slice_data
-    
+        if ram <= 512:
+            return "tiny"
+        elif ram <= 1024:
+            return "small"
+        elif ram <= 2048:
+            return "medium"
+        else:
+            return "large"
+
     def save_topology_json(self, topology: Dict, filename: str = None) -> str:
         """
         Guarda topología en formato JSON compatible con tu sistema anterior

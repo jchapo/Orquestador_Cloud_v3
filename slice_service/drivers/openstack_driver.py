@@ -335,6 +335,68 @@ class OpenStackDriver(BaseDriver):
         except Exception as e:
             logger.error(f"Error getting server resources: {e}")
             return []
+
+    def stop_vm(self, vm_name: str, server_name: str = None) -> bool:
+        """Para VM usando Nova API"""
+        if not self.token and not self.authenticate():
+            return False
+        
+        try:
+            vm_id = self._find_vm_by_name(vm_name)
+            if not vm_id:
+                logger.warning(f"VM {vm_name} not found")
+                return True
+            
+            # Parar VM
+            stop_data = {"os-stop": None}
+            response = requests.post(
+                f"{self.nova_url}/servers/{vm_id}/action",
+                json=stop_data,
+                headers=self._get_headers(),
+                timeout=30
+            )
+            
+            if response.status_code == 202:
+                logger.info(f"✓ VM {vm_name} stopped in OpenStack")
+                return True
+            else:
+                logger.error(f"Failed to stop VM: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error stopping VM {vm_name}: {e}")
+            return False
+
+    def start_vm(self, vm_name: str, server_name: str = None) -> bool:
+        """Inicia VM usando Nova API"""
+        if not self.token and not self.authenticate():
+            return False
+        
+        try:
+            vm_id = self._find_vm_by_name(vm_name)
+            if not vm_id:
+                logger.error(f"VM {vm_name} not found")
+                return False
+            
+            # Iniciar VM
+            start_data = {"os-start": None}
+            response = requests.post(
+                f"{self.nova_url}/servers/{vm_id}/action",
+                json=start_data,
+                headers=self._get_headers(),
+                timeout=30
+            )
+            
+            if response.status_code == 202:
+                logger.info(f"✓ VM {vm_name} started in OpenStack")
+                return True
+            else:
+                logger.error(f"Failed to start VM: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error starting VM {vm_name}: {e}")
+            return False        
     
     def deploy_slice(self, slice_config: Dict, placement: Dict) -> Dict:
         """Despliega slice completo en OpenStack"""

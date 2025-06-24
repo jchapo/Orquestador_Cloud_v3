@@ -1,0 +1,60 @@
+{
+  "name": "star_topology_4vms",
+  "description": "Generated star topology",
+  "infrastructure": "linux",
+  "nodes": [
+    {
+      "name": "vm1",
+      "flavor": "medium",
+      "image": "ubuntu-20.04"
+    },
+    {
+      "name": "vm2",
+      "flavor": "medium",
+      "image": "ubuntu-20.04"
+    },
+    {
+      "name": "vm3",
+      "flavor": "medium",
+      "image": "ubuntu-20.04"
+    },
+    {
+      "name": "vm4",
+      "flavor": "medium",
+      "image": "ubuntu-20.04"
+    }
+  ],
+  "networks": [
+    {
+      "cidr": "192.168.101.0/24",
+      "gateway": "192.168.101.1",
+      "name": "star_network"
+    }
+  ],
+  "connections": [
+    {
+      "from": "vm1",
+      "to": "vm2"
+    },
+    {
+      "from": "vm2",
+      "to": "vm1"
+    },
+    {
+      "from": "vm1",
+      "to": "vm3"
+    },
+    {
+      "from": "vm3",
+      "to": "vm1"
+    },
+    {
+      "from": "vm1",
+      "to": "vm4"
+    },
+    {
+      "from": "vm4",
+      "to": "vm1"
+    }
+  ]
+}

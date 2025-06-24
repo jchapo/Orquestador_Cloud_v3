@@ -10,6 +10,7 @@ from advanced_topology_generator import AdvancedTopologyGenerator, TopologyType,
 import uuid
 import logging
 import traceback
+import ipaddress
 
 
 # Configurar logging
@@ -137,6 +138,143 @@ def token_required(f):
 
 # Inicializar generador
 topology_generator = AdvancedTopologyGenerator()
+
+@app.route('/templates/validate', methods=['POST'])
+@token_required
+def validate_template():
+    """Valida una topología custom antes de crear el slice"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({
+                'valid': False,
+                'errors': ['No JSON data provided']
+            }), 400
+        
+        errors = []
+        warnings = []
+        
+        # 1. Validar campos requeridos
+        required_fields = ['name', 'nodes', 'networks']
+        for field in required_fields:
+            if field not in data:
+                errors.append(f'Missing required field: {field}')
+        
+        if errors:
+            return jsonify({'valid': False, 'errors': errors}), 400
+        
+        # 2. Validar nodos
+        nodes = data.get('nodes', [])
+        if len(nodes) == 0:
+            errors.append('At least one node is required')
+        
+        node_names = set()
+        for i, node in enumerate(nodes):
+            # Campos requeridos por nodo
+            node_required = ['name', 'flavor', 'image']
+            for field in node_required:
+                if field not in node:
+                    errors.append(f'Node {i+1}: Missing field "{field}"')
+            
+            # Nombres únicos
+            if 'name' in node:
+                if node['name'] in node_names:
+                    errors.append(f'Duplicate node name: {node["name"]}')
+                node_names.add(node['name'])
+            
+            # Validar flavor
+            if 'flavor' in node and node['flavor'] not in FlavorManager.list_flavors():
+                errors.append(f'Node {node.get("name", i+1)}: Invalid flavor "{node["flavor"]}"')
+        
+        # 3. Validar redes
+        networks = data.get('networks', [])
+        if len(networks) == 0:
+            warnings.append('No networks defined - nodes may not be connected')
+        
+        network_names = set()
+        for i, network in enumerate(networks):
+            # Campos requeridos por red
+            if 'name' not in network:
+                errors.append(f'Network {i+1}: Missing field "name"')
+            if 'cidr' not in network:
+                errors.append(f'Network {i+1}: Missing field "cidr"')
+            
+            # Nombres únicos
+            if 'name' in network:
+                if network['name'] in network_names:
+                    errors.append(f'Duplicate network name: {network["name"]}')
+                network_names.add(network['name'])
+            
+            # Validar CIDR
+            if 'cidr' in network:
+                try:
+                    import ipaddress
+                    ipaddress.IPv4Network(network['cidr'], strict=False)
+                except ValueError:
+                    errors.append(f'Network {network.get("name", i+1)}: Invalid CIDR "{network["cidr"]}"')
+        
+        # 4. Validar conexiones (si existen)
+        connections = data.get('connections', [])
+        for i, conn in enumerate(connections):
+            # Verificar que los nodos existen
+            source = conn.get('source') or conn.get('from')
+            target = conn.get('target') or conn.get('to')
+            network = conn.get('network')
+            
+            if source and source not in node_names:
+                errors.append(f'Connection {i+1}: Source node "{source}" not found')
+            if target and target not in node_names:
+                errors.append(f'Connection {i+1}: Target node "{target}" not found')
+            if network and network not in network_names:
+                errors.append(f'Connection {i+1}: Network "{network}" not found')
+        
+        # 5. Validar recursos (estimación)
+        total_vcpus = 0
+        total_ram = 0
+        for node in nodes:
+            if 'flavor' in node and node['flavor'] in FlavorManager.DEFAULT_FLAVORS:
+                flavor_config = FlavorManager.DEFAULT_FLAVORS[node['flavor']]
+                total_vcpus += flavor_config['cpu']
+                total_ram += flavor_config['ram']
+        
+        # Límites del cluster PUCP (4 servidores con ~4 vCPUs y 4GB cada uno)
+        cluster_limit_vcpus = 16  # 4 servidores × 4 vCPUs
+        cluster_limit_ram = 16384  # 4 servidores × 4GB
+        
+        if total_vcpus > cluster_limit_vcpus:
+            warnings.append(f'High vCPU usage: {total_vcpus}/{cluster_limit_vcpus} - may not fit in cluster')
+        if total_ram > cluster_limit_ram:
+            warnings.append(f'High RAM usage: {total_ram}MB/{cluster_limit_ram}MB - may not fit in cluster')
+        
+        # 6. Preparar respuesta
+        is_valid = len(errors) == 0
+        
+        response = {
+            'valid': is_valid,
+            'errors': errors,
+            'warnings': warnings,
+            'summary': {
+                'node_count': len(nodes),
+                'network_count': len(networks),
+                'connection_count': len(connections),
+                'estimated_vcpus': total_vcpus,
+                'estimated_ram_mb': total_ram
+            }
+        }
+        
+        if is_valid:
+            response['message'] = 'Template validation successful'
+            return jsonify(response), 200
+        else:
+            return jsonify(response), 400
+            
+    except Exception as e:
+        logger.error(f"Template validation error: {e}")
+        logger.error(traceback.format_exc())
+        return jsonify({
+            'valid': False,
+            'errors': [f'Validation error: {str(e)}']
+        }), 500
 
 @app.route('/templates', methods=['GET'])
 @token_required

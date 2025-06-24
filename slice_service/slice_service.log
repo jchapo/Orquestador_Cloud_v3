@@ -1,0 +1,22 @@
+2025-06-20 04:21:28,059 - __main__ - WARNING - Cluster config not found, using defaults
+2025-06-20 04:21:28,060 - __main__ - INFO - Using default server configuration
+2025-06-20 04:21:28,060 - __main__ - INFO - Default servers loaded
+ * Serving Flask app 'slice_service'
+ * Debug mode: off
+2025-06-20 04:21:28,261 - werkzeug - INFO - [31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5002
+ * Running on http://10.20.12.16:5002
+2025-06-20 04:21:28,262 - werkzeug - INFO - [33mPress CTRL+C to quit[0m
+2025-06-20 04:21:38,490 - __main__ - ERROR - Token validation error: Signature verification failed
+2025-06-20 04:21:38,492 - werkzeug - INFO - 127.0.0.1 - - [20/Jun/2025 04:21:38] "[31m[1mGET /validate-integration HTTP/1.1[0m" 401 -
+2025-06-20 04:22:11,588 - __main__ - ERROR - Token validation error: Signature verification failed
+2025-06-20 04:22:11,590 - werkzeug - INFO - 127.0.0.1 - - [20/Jun/2025 04:22:11] "[31m[1mGET /validate-integration HTTP/1.1[0m" 401 -
+2025-06-20 04:22:20,197 - __main__ - ERROR - Token validation error: Signature verification failed
+2025-06-20 04:22:20,198 - werkzeug - INFO - 127.0.0.1 - - [20/Jun/2025 04:22:20] "[31m[1mGET /validate-integration HTTP/1.1[0m" 401 -
+2025-06-20 04:22:37,912 - __main__ - ERROR - Token validation error: Signature verification failed
+2025-06-20 04:22:37,913 - werkzeug - INFO - 127.0.0.1 - - [20/Jun/2025 04:22:37] "[31m[1mGET /validate-integration HTTP/1.1[0m" 401 -
+2025-06-20 04:23:05,530 - __main__ - ERROR - Token validation error: Signature verification failed
+2025-06-20 04:23:05,531 - werkzeug - INFO - 127.0.0.1 - - [20/Jun/2025 04:23:05] "[31m[1mGET /validate-integration HTTP/1.1[0m" 401 -
+2025-06-20 04:23:44,985 - __main__ - ERROR - Token validation error: Signature verification failed
+2025-06-20 04:23:44,987 - werkzeug - INFO - 127.0.0.1 - - [20/Jun/2025 04:23:44] "[31m[1mGET /validate-integration HTTP/1.1[0m" 401 -

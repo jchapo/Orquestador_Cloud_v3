@@ -18,6 +18,7 @@ from typing import Dict, List, Any, Optional
 import jwt
 from drivers.linux_driver import LinuxClusterDriver
 from drivers.base_driver import BaseDriver
+import ipaddress
 
 # Configurar logging
 logging.basicConfig(
@@ -86,7 +87,7 @@ def init_db():
             )
         ''')
         
-        # Tabla de nodos con más detalles
+        # Tabla de nodos CON NUEVOS CAMPOS R5
         db.execute('''
             CREATE TABLE IF NOT EXISTS nodes (
                 id TEXT PRIMARY KEY,
@@ -97,6 +98,8 @@ def init_db():
                 assigned_host TEXT,
                 vm_id TEXT,
                 ip_address TEXT,
+                management_ip TEXT,
+                internet_access BOOLEAN DEFAULT 0,
                 status TEXT DEFAULT 'pending',
                 console_url TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -114,6 +117,9 @@ def init_db():
                 vlan_id INTEGER,
                 gateway TEXT,
                 dns_servers TEXT,
+                network_type TEXT DEFAULT 'data',
+                internet_access BOOLEAN DEFAULT 0,
+                is_management BOOLEAN DEFAULT 0,
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (slice_id) REFERENCES slices (id) ON DELETE CASCADE
@@ -367,7 +373,7 @@ def token_required(f):
     return decorated
 
 def validate_slice_data(data):
-    """Valida datos de slice"""
+    """Valida datos de slice con soporte para R5"""
     required = ['name', 'infrastructure', 'nodes', 'networks']
     missing = [field for field in required if field not in data]
     if missing:
@@ -382,7 +388,7 @@ def validate_slice_data(data):
     if not data['networks']:
         return False, 'At least one network is required'
     
-    # Validar nodos
+    # Validar nodos con nuevos campos R5
     for i, node in enumerate(data['nodes']):
         node_required = ['name', 'image', 'flavor']
         node_missing = [field for field in node_required if field not in node]
@@ -391,13 +397,33 @@ def validate_slice_data(data):
         
         if node['flavor'] not in VM_FLAVORS:
             return False, f'Invalid flavor "{node["flavor"]}" for node {i+1}'
+        
+        # Validar internet_access (opcional)
+        if 'internet_access' in node and not isinstance(node['internet_access'], bool):
+            return False, f'Node {i+1}: internet_access must be boolean'
+        
+        # Validar management_ip (opcional)
+        if 'management_ip' in node:
+            try:
+                ipaddress.IPv4Address(node['management_ip'])
+            except ValueError:
+                return False, f'Node {i+1}: Invalid management_ip format'
     
-    # Validar redes
+    # Validar redes con nuevos campos R5
     for i, network in enumerate(data['networks']):
         net_required = ['name', 'cidr']
         net_missing = [field for field in net_required if field not in network]
         if net_missing:
-            return False, f'Network {i+1} missing fields: {", ".join(net_missing)}'
+            return False, f'Network {i+1} missing fields: {", ".join(net_missing)}"'
+        
+        # Validar network_type (opcional)
+        valid_types = ['management', 'trunk', 'data', 'provider']
+        if 'network_type' in network and network['network_type'] not in valid_types:
+            return False, f'Network {i+1}: Invalid network_type. Must be one of: {valid_types}'
+        
+        # Validar internet_access (opcional)
+        if 'internet_access' in network and not isinstance(network['internet_access'], bool):
+            return False, f'Network {i+1}: internet_access must be boolean'
     
     return True, None
 
@@ -637,6 +663,291 @@ def get_driver(infrastructure: str) -> BaseDriver:
         raise ValueError(f"Unsupported infrastructure: {infrastructure}")
 
 
+@app.route('/validate-integration', methods=['GET'])
+@token_required
+def validate_integration():
+    """Valida integración con Network Service"""
+    try:
+        # Solo admin puede validar
+        if 'admin' not in g.current_user.get('role', ''):
+            return jsonify({'error': 'Admin access required'}), 403
+        
+        # Obtener driver Linux y validar
+        driver = get_driver('linux')
+        validation_result = driver.validate_network_service_integration()
+        
+        return jsonify({
+            'timestamp': datetime.datetime.utcnow().isoformat(),
+            'integration_status': validation_result
+        })
+        
+    except Exception as e:
+        logger.error(f"Integration validation error: {e}")
+        return jsonify({'error': 'Validation failed'}), 500
+
+@app.route('/slices/<slice_id>/stop', methods=['POST'])
+@token_required
+def stop_slice(slice_id):
+    """Para un slice activo sin eliminarlo"""
+    try:
+        db = get_db()
+        
+        # Verificar propiedad del slice
+        slice_data = db.execute('''
+            SELECT * FROM slices WHERE id = ? AND user_id = ? AND deleted_at IS NULL
+        ''', (slice_id, g.current_user['user_id'])).fetchone()
+        
+        if not slice_data:
+            return jsonify({'error': 'Slice not found or access denied'}), 404
+        
+        if slice_data['status'] != 'active':
+            return jsonify({'error': f'Cannot stop slice in status: {slice_data["status"]}'}), 400
+        
+        # Actualizar estado a 'stopping'
+        db.execute('''
+            UPDATE slices SET status = 'stopping', updated_at = CURRENT_TIMESTAMP 
+            WHERE id = ?
+        ''', (slice_id,))
+        db.commit()
+        
+        try:
+            # Obtener VMs del slice
+            deployment_data = json.loads(slice_data['deployment_data']) if slice_data['deployment_data'] else {}
+            vm_list = deployment_data.get('deployed_vms', [])
+            
+            if not vm_list:
+                # No hay VMs, marcar como stopped directamente
+                db.execute('''
+                    UPDATE slices SET status = 'stopped', updated_at = CURRENT_TIMESTAMP 
+                    WHERE id = ?
+                ''', (slice_id,))
+                db.commit()
+                return jsonify({
+                    'message': 'Slice stopped successfully (no VMs found)',
+                    'slice_id': slice_id,
+                    'status': 'stopped'
+                })
+            
+            # Obtener driver y parar VMs
+            driver = get_driver(slice_data['infrastructure'])
+            
+            stopped_vms = []
+            errors = []
+            
+            for vm_info in vm_list:
+                try:
+                    vm_name = vm_info['name']
+                    server_name = vm_info.get('server', vm_info.get('assigned_host'))
+                    
+                    if not server_name:
+                        errors.append(f"No server info for VM {vm_name}")
+                        continue
+                    
+                    # Parar VM (no eliminar)
+                    success = driver.stop_vm(vm_name, server_name)
+                    if success:
+                        stopped_vms.append(vm_name)
+                        logger.info(f"✓ VM {vm_name} stopped")
+                    else:
+                        errors.append(f"Failed to stop VM {vm_name}")
+                        
+                except Exception as e:
+                    error_msg = f"Error stopping VM {vm_info.get('name', 'unknown')}: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+            
+            # Actualizar estado final
+            final_status = 'stopped' if not errors else 'error'
+            error_message = '; '.join(errors) if errors else None
+            
+            db.execute('''
+                UPDATE slices 
+                SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (final_status, error_message, slice_id))
+            db.commit()
+            
+            logger.info(f"✓ Slice {slice_id} stopped with status: {final_status}")
+            
+            return jsonify({
+                'status': 'success' if final_status == 'stopped' else 'partial',
+                'slice_id': slice_id,
+                'final_status': final_status,
+                'stopped_vms': stopped_vms,
+                'errors': errors,
+                'message': f'Slice stop completed with status: {final_status}'
+            })
+            
+        except Exception as e:
+            # Error durante el proceso de parada
+            db.execute('''
+                UPDATE slices 
+                SET status = 'error', error_message = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (str(e), slice_id))
+            db.commit()
+            
+            logger.error(f"✗ Critical error stopping slice {slice_id}: {e}")
+            return jsonify({'error': 'Internal server error during stop'}), 500
+        
+    except Exception as e:
+        logger.error(f"Critical error in stop_slice: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/slices/<slice_id>/start', methods=['POST'])
+@token_required
+def start_slice(slice_id):
+    """Inicia un slice parado"""
+    try:
+        db = get_db()
+        
+        # Verificar propiedad del slice
+        slice_data = db.execute('''
+            SELECT * FROM slices WHERE id = ? AND user_id = ? AND deleted_at IS NULL
+        ''', (slice_id, g.current_user['user_id'])).fetchone()
+        
+        if not slice_data:
+            return jsonify({'error': 'Slice not found or access denied'}), 404
+        
+        if slice_data['status'] != 'stopped':
+            return jsonify({'error': f'Cannot start slice in status: {slice_data["status"]}'}), 400
+        
+        # Actualizar estado a 'starting'
+        db.execute('''
+            UPDATE slices SET status = 'starting', updated_at = CURRENT_TIMESTAMP 
+            WHERE id = ?
+        ''', (slice_id,))
+        db.commit()
+        
+        try:
+            # Obtener información de deployment
+            deployment_data = json.loads(slice_data['deployment_data']) if slice_data['deployment_data'] else {}
+            vm_list = deployment_data.get('deployed_vms', [])
+            
+            if not vm_list:
+                db.execute('''
+                    UPDATE slices 
+                    SET status = 'error', error_message = 'No VM deployment data found'
+                    WHERE id = ?
+                ''', (slice_id,))
+                db.commit()
+                return jsonify({'error': 'No VM deployment data found'}), 400
+            
+            # Obtener driver e iniciar VMs
+            driver = get_driver(slice_data['infrastructure'])
+            
+            started_vms = []
+            errors = []
+            
+            for vm_info in vm_list:
+                try:
+                    vm_name = vm_info['name']
+                    server_name = vm_info.get('server', vm_info.get('assigned_host'))
+                    
+                    if not server_name:
+                        errors.append(f"No server info for VM {vm_name}")
+                        continue
+                    
+                    # Iniciar VM
+                    success = driver.start_vm(vm_name, server_name)
+                    if success:
+                        started_vms.append(vm_name)
+                        logger.info(f"✓ VM {vm_name} started")
+                    else:
+                        errors.append(f"Failed to start VM {vm_name}")
+                        
+                except Exception as e:
+                    error_msg = f"Error starting VM {vm_info.get('name', 'unknown')}: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+            
+            # Actualizar estado final
+            final_status = 'active' if not errors else 'error'
+            error_message = '; '.join(errors) if errors else None
+            
+            db.execute('''
+                UPDATE slices 
+                SET status = ?, error_message = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (final_status, error_message, slice_id))
+            db.commit()
+            
+            logger.info(f"✓ Slice {slice_id} started with status: {final_status}")
+            
+            return jsonify({
+                'status': 'success' if final_status == 'active' else 'partial',
+                'slice_id': slice_id,
+                'final_status': final_status,
+                'started_vms': started_vms,
+                'errors': errors,
+                'message': f'Slice start completed with status: {final_status}'
+            })
+            
+        except Exception as e:
+            # Error durante el proceso de inicio
+            db.execute('''
+                UPDATE slices 
+                SET status = 'error', error_message = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+            ''', (str(e), slice_id))
+            db.commit()
+            
+            logger.error(f"✗ Critical error starting slice {slice_id}: {e}")
+            return jsonify({'error': 'Internal server error during start'}), 500
+        
+    except Exception as e:
+        logger.error(f"Critical error in start_slice: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
+@app.route('/slices/<slice_id>/restart', methods=['POST'])
+@token_required
+def restart_slice(slice_id):
+    """Reinicia un slice activo"""
+    try:
+        db = get_db()
+        
+        # Verificar propiedad del slice
+        slice_data = db.execute('''
+            SELECT * FROM slices WHERE id = ? AND user_id = ? AND deleted_at IS NULL
+        ''', (slice_id, g.current_user['user_id'])).fetchone()
+        
+        if not slice_data:
+            return jsonify({'error': 'Slice not found or access denied'}), 404
+        
+        if slice_data['status'] not in ['active', 'error']:
+            return jsonify({'error': f'Cannot restart slice in status: {slice_data["status"]}'}), 400
+        
+        # Parar primero
+        stop_response = stop_slice(slice_id)
+        stop_data = stop_response.get_json()
+        
+        if stop_data.get('status') != 'success':
+            return jsonify({
+                'error': 'Failed to stop slice for restart',
+                'stop_result': stop_data
+            }), 500
+        
+        # Esperar un momento para que las VMs se paren completamente
+        import time
+        time.sleep(2)
+        
+        # Iniciar después
+        start_response = start_slice(slice_id)
+        start_data = start_response.get_json()
+        
+        return jsonify({
+            'message': 'Slice restart completed',
+            'slice_id': slice_id,
+            'restart_result': {
+                'stop': stop_data,
+                'start': start_data
+            }
+        })
+        
+    except Exception as e:
+        logger.error(f"Critical error restarting slice {slice_id}: {e}")
+        return jsonify({'error': 'Internal server error'}), 500
+
 @app.route('/health', methods=['GET'])
 def health():
     """Health check endpoint"""
@@ -696,13 +1007,13 @@ def list_slices():
 @app.route('/slices', methods=['POST'])
 @token_required
 def create_slice():
-    """Crea un nuevo slice"""
+    """Crea un nuevo slice con soporte R5"""
     try:
         data = request.get_json()
         if not data:
             return jsonify({'error': 'Invalid JSON'}), 400
         
-        # Validar datos
+        # Validar datos (usa la función actualizada)
         is_valid, error = validate_slice_data(data)
         if not is_valid:
             return jsonify({'error': error}), 400
@@ -710,7 +1021,7 @@ def create_slice():
         slice_id = str(uuid.uuid4())
         db = get_db()
         
-        # Calcular recursos totales
+        # Calcular recursos totales (sin cambios)
         total_vcpus = total_ram = total_disk = 0
         for node in data['nodes']:
             flavor = VM_FLAVORS[node['flavor']]
@@ -719,55 +1030,51 @@ def create_slice():
             total_disk += flavor['disk']
         
         try:
-            # Insertar slice
+            # Insertar slice (sin cambios)
             db.execute('''
                 INSERT INTO slices (id, user_id, name, description, template_id, 
                                   infrastructure, availability_zone, placement_policy,
                                   total_vcpus, total_ram, total_disk)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
-                slice_id,
-                g.current_user['user_id'],
-                data['name'],
-                data.get('description'),
-                data.get('template_id'),
-                data['infrastructure'],
-                data.get('availability_zone'),
+                slice_id, g.current_user['user_id'], data['name'],
+                data.get('description'), data.get('template_id'),
+                data['infrastructure'], data.get('availability_zone'),
                 data.get('placement_policy', 'balanced'),
-                total_vcpus,
-                total_ram,
-                total_disk
+                total_vcpus, total_ram, total_disk
             ))
             
-            # Insertar nodos
+            # Insertar nodos CON NUEVOS CAMPOS
             for node in data['nodes']:
                 db.execute('''
-                    INSERT INTO nodes (id, slice_id, name, image, flavor)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (
-                    str(uuid.uuid4()),
-                    slice_id,
-                    node['name'],
-                    node['image'],
-                    node['flavor']
-                ))
-            
-            # Insertar redes
-            for network in data['networks']:
-                db.execute('''
-                    INSERT INTO slice_networks (id, slice_id, name, cidr, vlan_id, gateway, dns_servers)
+                    INSERT INTO nodes (id, slice_id, name, image, flavor, 
+                                     management_ip, internet_access)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
-                    str(uuid.uuid4()),
-                    slice_id,
-                    network['name'],
-                    network['cidr'],
-                    network.get('vlan_id'),
-                    network.get('gateway'),
-                    json.dumps(network.get('dns_servers', []))
+                    str(uuid.uuid4()), slice_id, node['name'],
+                    node['image'], node['flavor'],
+                    node.get('management_ip'),           # ← NUEVO
+                    node.get('internet_access', False)   # ← NUEVO
                 ))
             
-            # Insertar conexiones si se especifican
+            # Insertar redes CON NUEVOS CAMPOS
+            for network in data['networks']:
+                db.execute('''
+                    INSERT INTO slice_networks (id, slice_id, name, cidr, vlan_id, 
+                                               gateway, dns_servers, network_type, 
+                                               internet_access, is_management)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    str(uuid.uuid4()), slice_id, network['name'],
+                    network['cidr'], network.get('vlan_id'),
+                    network.get('gateway'), 
+                    json.dumps(network.get('dns_servers', [])),
+                    network.get('network_type', 'data'),        # ← NUEVO
+                    network.get('internet_access', False),      # ← NUEVO
+                    network.get('network_type') == 'management' # ← NUEVO
+                ))
+            
+            # Insertar conexiones (sin cambios)
             if 'connections' in data:
                 for conn in data['connections']:
                     source_node = db.execute(
@@ -790,16 +1097,12 @@ def create_slice():
                             INSERT INTO node_connections (id, slice_id, source_node_id, target_node_id, network_id)
                             VALUES (?, ?, ?, ?, ?)
                         ''', (
-                            str(uuid.uuid4()),
-                            slice_id,
-                            source_node['id'],
-                            target_node['id'],
-                            network['id']
+                            str(uuid.uuid4()), slice_id,
+                            source_node['id'], target_node['id'], network['id']
                         ))
             
             db.commit()
-            
-            logger.info(f"Slice created: {slice_id} by user {g.current_user['user_id']}")
+            logger.info(f"Slice created with R5 support: {slice_id}")
             
         except Exception as e:
             db.rollback()
@@ -808,12 +1111,17 @@ def create_slice():
         
         return jsonify({
             'id': slice_id,
-            'message': 'Slice created successfully',
+            'message': 'Slice created successfully with R5 support',
             'status': 'draft',
             'resources': {
                 'total_vcpus': total_vcpus,
                 'total_ram': total_ram,
                 'total_disk': total_disk
+            },
+            'r5_features': {
+                'management_networks': len([n for n in data['networks'] if n.get('network_type') == 'management']),
+                'internet_enabled_nodes': len([n for n in data['nodes'] if n.get('internet_access')]),
+                'trunk_networks': len([n for n in data['networks'] if n.get('network_type') == 'trunk'])
             }
         }), 201
         
@@ -824,11 +1132,11 @@ def create_slice():
 @app.route('/slices/<slice_id>', methods=['GET'])
 @token_required
 def get_slice(slice_id):
-    """Obtiene detalles de un slice"""
+    """Obtiene detalles de un slice con campos R5"""
     try:
         db = get_db()
         
-        # Verificar propiedad o permisos
+        # Verificar propiedad (sin cambios)
         slice_data = db.execute('''
             SELECT * FROM slices WHERE id = ? AND deleted_at IS NULL
         ''', (slice_id,)).fetchone()
@@ -836,22 +1144,22 @@ def get_slice(slice_id):
         if not slice_data:
             return jsonify({'error': 'Slice not found'}), 404
         
-        # Verificar permisos
+        # Verificar permisos (sin cambios)
         if (slice_data['user_id'] != g.current_user['user_id'] and 
             'view_all_slices' not in g.current_user.get('permissions', [])):
             return jsonify({'error': 'Access denied'}), 403
         
-        # Obtener nodos
+        # Obtener nodos CON NUEVOS CAMPOS
         nodes = db.execute('''
             SELECT * FROM nodes WHERE slice_id = ? ORDER BY name
         ''', (slice_id,)).fetchall()
         
-        # Obtener redes
+        # Obtener redes CON NUEVOS CAMPOS
         networks = db.execute('''
             SELECT * FROM slice_networks WHERE slice_id = ? ORDER BY name
         ''', (slice_id,)).fetchall()
         
-        # Obtener conexiones
+        # Obtener conexiones (sin cambios)
         connections = db.execute('''
             SELECT nc.*, 
                    sn.name as source_name, 
@@ -869,7 +1177,22 @@ def get_slice(slice_id):
         result['networks'] = [dict(network) for network in networks]
         result['connections'] = [dict(conn) for conn in connections]
         
-        # Parsear datos de despliegue si existen
+        # Agregar estadísticas R5
+        result['r5_summary'] = {
+            'management_networks': len([n for n in networks if n['network_type'] == 'management']),
+            'trunk_networks': len([n for n in networks if n['network_type'] == 'trunk']),
+            'internet_enabled_nodes': len([n for n in nodes if n['internet_access']]),
+            'total_networks_by_type': {}
+        }
+        
+        # Contar redes por tipo
+        for network in networks:
+            net_type = network['network_type']
+            if net_type not in result['r5_summary']['total_networks_by_type']:
+                result['r5_summary']['total_networks_by_type'][net_type] = 0
+            result['r5_summary']['total_networks_by_type'][net_type] += 1
+        
+        # Parsear datos de despliegue si existen (sin cambios)
         if result['deployment_data']:
             try:
                 result['deployment_data'] = json.loads(result['deployment_data'])

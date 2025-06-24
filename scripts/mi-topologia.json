@@ -1,0 +1,46 @@
+{
+  "name": "lab-web-db",
+  "description": "Laboratorio con servidor web y base de datos",
+  "infrastructure": "linux",
+  "nodes": [
+    {
+      "name": "web-server",
+      "flavor": "medium",
+      "image": "ubuntu-20.04"
+    },
+    {
+      "name": "database",
+      "flavor": "large", 
+      "image": "ubuntu-20.04"
+    },
+    {
+      "name": "load-balancer",
+      "flavor": "small",
+      "image": "ubuntu-20.04"
+    }
+  ],
+  "networks": [
+    {
+      "name": "frontend-net",
+      "cidr": "192.168.10.0/24",
+      "gateway": "192.168.10.1"
+    },
+    {
+      "name": "backend-net", 
+      "cidr": "192.168.20.0/24",
+      "gateway": "192.168.20.1"
+    }
+  ],
+  "connections": [
+    {
+      "source": "load-balancer",
+      "target": "web-server",
+      "network": "frontend-net"
+    },
+    {
+      "source": "web-server",
+      "target": "database", 
+      "network": "backend-net"
+    }
+  ]
+}

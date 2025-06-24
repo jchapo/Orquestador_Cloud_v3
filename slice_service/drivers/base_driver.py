@@ -18,6 +18,34 @@ class BaseDriver(ABC):
         self.infrastructure_type = "unknown"
     
     @abstractmethod
+    def stop_vm(self, vm_name: str, server_name: str) -> bool:
+        """
+        Para una VM sin eliminarla
+        
+        Args:
+            vm_name: Nombre de la VM
+            server_name: Servidor donde está la VM
+            
+        Returns:
+            True si se paró correctamente
+        """
+        pass
+
+    @abstractmethod
+    def start_vm(self, vm_name: str, server_name: str) -> bool:
+        """
+        Inicia una VM parada
+        
+        Args:
+            vm_name: Nombre de la VM
+            server_name: Servidor donde está la VM
+            
+        Returns:
+            True si se inició correctamente
+        """
+        pass
+    
+    @abstractmethod
     def create_vm(self, vm_config: Dict, server_name: str, 
                   slice_id: str = None, networks: List[Dict] = None) -> Dict:
         """
