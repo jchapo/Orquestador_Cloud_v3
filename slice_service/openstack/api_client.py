@@ -1,195 +1,256 @@
-#!/usr/bin/env python3
-"""
-Cliente base para APIs de OpenStack
-Implementa autenticación y llamadas básicas a los servicios
-"""
-
-import requests
-import json
 import logging
-from typing import Dict, Optional, Any
-from datetime import datetime, timedelta
-import sys
-import os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from config.openstack_config import OPENSTACK_CONFIG
+import time
+from typing import Dict, List, Any, Optional
+
+from keystoneauth1 import loading, session
+from keystoneauth1.identity import v3
+from novaclient import client as nova_client
+from neutronclient.v2_0 import client as neutron_client
+from glanceclient import Client as glance_client
+from cinderclient import client as cinder_client
 
 logger = logging.getLogger(__name__)
 
 class OpenStackAPIClient:
-    """Cliente base para APIs de OpenStack"""
+    def __init__(self, auth_config: Dict[str, str]):
+        self.auth_config = auth_config
+        self._session = None
+        self._nova = None
+        self._neutron = None
+        self._glance = None
+        self._cinder = None
+        
+    @property
+    def session(self):
+        if self._session is None:
+            auth = v3.Password(
+                auth_url=self.auth_config['auth_url'],
+                username=self.auth_config['username'],
+                password=self.auth_config['password'],
+                project_name=self.auth_config['project_name'],
+                user_domain_name=self.auth_config['user_domain_name'],
+                project_domain_name=self.auth_config['project_domain_name']
+            )
+            self._session = session.Session(auth=auth)
+        return self._session
     
-    def __init__(self):
-        self.config = OPENSTACK_CONFIG
-        self.endpoints = self.config['endpoints']
-        self.admin_creds = self.config['admin_credentials']
+    @property
+    def nova(self):
+        if self._nova is None:
+            self._nova = nova_client.Client(
+                version='2.1',
+                session=self.session,
+                region_name=self.auth_config.get('region_name', 'RegionOne')
+            )
+        return self._nova
+    
+    @property
+    def neutron(self):
+        if self._neutron is None:
+            self._neutron = neutron_client.Client(
+                session=self.session,
+                region_name=self.auth_config.get('region_name', 'RegionOne')
+            )
+        return self._neutron
+    
+    @property
+    def glance(self):
+        if self._glance is None:
+            self._glance = glance_client(
+                '2',
+                session=self.session,
+                region_name=self.auth_config.get('region_name', 'RegionOne')
+            )
+        return self._glance
+    
+    @property
+    def cinder(self):
+        if self._cinder is None:
+            self._cinder = cinder_client.Client(
+                '3',
+                session=self.session,
+                region_name=self.auth_config.get('region_name', 'RegionOne')
+            )
+        return self._cinder
+    
+    def list_servers(self, detailed=True) -> List[Any]:
+        return self.nova.servers.list(detailed=detailed)
+    
+    def create_server(self, name: str, image_id: str, flavor_id: str,
+                     network_id: str = None, security_groups: List[str] = None,
+                     availability_zone: str = None, user_data: str = None) -> Any:
         
-        # Tokens y sesión
-        self.auth_token = None
-        self.token_expires = None
-        self.project_id = None
-        self.session = requests.Session()
+        nics = []
+        if network_id:
+            nics = [{'net-id': network_id}]
         
-        # Cache de servicios
-        self.service_catalog = {}
+        if security_groups is None:
+            security_groups = ['default']
         
-    def authenticate(self) -> bool:
-        """Autenticación con Keystone"""
-        logger.info("Authenticating with OpenStack Keystone...")
+        server = self.nova.servers.create(
+            name=name,
+            image=image_id,
+            flavor=flavor_id,
+            nics=nics,
+            security_groups=security_groups,
+            availability_zone=availability_zone,
+            userdata=user_data
+        )
         
-        auth_url = self.endpoints['keystone']['public']
-        auth_data = {
-            "auth": {
-                "identity": {
-                    "methods": ["password"],
-                    "password": {
-                        "user": {
-                            "name": self.admin_creds['username'],
-                            "domain": {"name": self.admin_creds['domain_name']},
-                            "password": self.admin_creds['password']
-                        }
-                    }
-                },
-                "scope": {
-                    "project": {
-                        "name": self.admin_creds['project_name'],
-                        "domain": {"name": self.admin_creds['domain_name']}
-                    }
-                }
+        return server
+    
+    def delete_server(self, server_id: str):
+        self.nova.servers.delete(server_id)
+    
+    def get_server(self, server_id: str) -> Any:
+        return self.nova.servers.get(server_id)
+    
+    def wait_for_server_active(self, server_id: str, timeout: int = 300) -> bool:
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            server = self.get_server(server_id)
+            if server.status == 'ACTIVE':
+                return True
+            elif server.status == 'ERROR':
+                raise Exception(f"Server {server_id} entered ERROR state")
+            
+            time.sleep(5)
+        
+        return False
+    
+    def list_networks(self) -> List[Dict]:
+        return self.neutron.list_networks()['networks']
+    
+    def create_network(self, name: str, provider_network_type: str = 'vlan',
+                      provider_physical_network: str = 'physnet1',
+                      provider_segmentation_id: int = None,
+                      shared: bool = False) -> Dict:
+        network_data = {
+            'network': {
+                'name': name,
+                'admin_state_up': True,
+                'shared': shared
             }
         }
         
-        try:
-            response = self.session.post(
-                f"{auth_url}/auth/tokens",
-                json=auth_data,
-                headers={'Content-Type': 'application/json'},
-                timeout=30
-            )
-            
-            if response.status_code == 201:
-                self.auth_token = response.headers.get('X-Subject-Token')
-                token_data = response.json()
-                
-                # Extraer información del token
-                self.project_id = token_data['token']['project']['id']
-                expires_at = token_data['token']['expires_at']
-                self.token_expires = datetime.fromisoformat(expires_at.replace('Z', '+00:00'))
-                
-                # Guardar catálogo de servicios
-                self.service_catalog = {
-                    service['type']: service['endpoints']
-                    for service in token_data['token']['catalog']
-                }
-                
-                # Configurar headers para futuras llamadas
-                self.session.headers.update({
-                    'X-Auth-Token': self.auth_token,
-                    'Content-Type': 'application/json'
-                })
-                
-                logger.info("✅ OpenStack authentication successful")
-                logger.info(f"   Project ID: {self.project_id}")
-                logger.info(f"   Token expires: {self.token_expires}")
-                
-                return True
-            else:
-                logger.error(f"Authentication failed: {response.status_code} - {response.text}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Authentication error: {e}")
-            return False
+        if provider_network_type == 'vlan':
+            network_data['network'].update({
+                'provider:network_type': provider_network_type,
+                'provider:physical_network': provider_physical_network
+            })
+            if provider_segmentation_id:
+                network_data['network']['provider:segmentation_id'] = provider_segmentation_id
+        
+        return self.neutron.create_network(network_data)['network']
     
-    def is_token_valid(self) -> bool:
-        """Verifica si el token sigue siendo válido"""
-        if not self.auth_token or not self.token_expires:
-            return False
-        
-        # Renovar token si expira en los próximos 5 minutos
-        return datetime.utcnow() < (self.token_expires - timedelta(minutes=5))
+    def delete_network(self, network_id: str):
+        self.neutron.delete_network(network_id)
     
-    def ensure_authenticated(self) -> bool:
-        """Asegura que tenemos un token válido"""
-        if not self.is_token_valid():
-            return self.authenticate()
-        return True
-    
-    def get_service_endpoint(self, service_type: str, interface: str = 'public') -> Optional[str]:
-        """Obtiene endpoint de un servicio del catálogo"""
-        if service_type in self.service_catalog:
-            for endpoint in self.service_catalog[service_type]:
-                if endpoint['interface'] == interface:
-                    return endpoint['url']
-        return None
-    
-    def make_request(self, method: str, service_type: str, path: str, 
-                    data: Optional[Dict] = None, interface: str = 'public') -> requests.Response:
-        """Hace una llamada HTTP a un servicio de OpenStack"""
-        
-        if not self.ensure_authenticated():
-            raise Exception("Failed to authenticate with OpenStack")
-        
-        endpoint = self.get_service_endpoint(service_type, interface)
-        if not endpoint:
-            raise Exception(f"Endpoint not found for service {service_type}")
-        
-        url = f"{endpoint.rstrip('/')}/{path.lstrip('/')}"
-        
-        logger.debug(f"{method.upper()} {url}")
-        
-        kwargs = {'timeout': 30}
-        if data:
-            kwargs['json'] = data
-        
-        response = self.session.request(method, url, **kwargs)
-        
-        logger.debug(f"Response: {response.status_code}")
-        
-        return response
-    
-    def health_check(self) -> Dict[str, Any]:
-        """Verifica estado de los servicios principales"""
-        services = ['identity', 'compute', 'network', 'image']
-        health_status = {
-            'overall': True,
-            'services': {},
-            'timestamp': datetime.utcnow().isoformat()
+    def create_subnet(self, network_id: str, cidr: str, name: str = None,
+                     gateway_ip: str = None, enable_dhcp: bool = True,
+                     dns_nameservers: List[str] = None) -> Dict:
+        subnet_data = {
+            'subnet': {
+                'network_id': network_id,
+                'cidr': cidr,
+                'ip_version': 4,
+                'enable_dhcp': enable_dhcp
+            }
         }
         
-        for service in services:
-            try:
-                if service == 'identity':
-                    # Keystone - verificar autenticación
-                    status = self.ensure_authenticated()
-                elif service == 'compute':
-                    # Nova - listar flavors
-                    response = self.make_request('GET', 'compute', 'flavors')
-                    status = response.status_code == 200
-                elif service == 'network':
-                    # Neutron - listar redes
-                    response = self.make_request('GET', 'network', 'v2.0/networks')
-                    status = response.status_code == 200
-                elif service == 'image':
-                    # Glance - listar imágenes
-                    response = self.make_request('GET', 'image', 'v2/images')
-                    status = response.status_code == 200
-                
-                health_status['services'][service] = {
-                    'status': 'healthy' if status else 'unhealthy',
-                    'available': status
-                }
-                
-                if not status:
-                    health_status['overall'] = False
-                    
-            except Exception as e:
-                logger.error(f"Health check failed for {service}: {e}")
-                health_status['services'][service] = {
-                    'status': 'error',
-                    'error': str(e),
-                    'available': False
-                }
-                health_status['overall'] = False
+        if name:
+            subnet_data['subnet']['name'] = name
+        if gateway_ip:
+            subnet_data['subnet']['gateway_ip'] = gateway_ip
+        if dns_nameservers:
+            subnet_data['subnet']['dns_nameservers'] = dns_nameservers
         
-        return health_status
+        return self.neutron.create_subnet(subnet_data)['subnet']
+    
+    def create_port(self, network_id: str, name: str = None,
+                   fixed_ips: List[Dict] = None, security_groups: List[str] = None) -> Dict:
+        port_data = {
+            'port': {
+                'network_id': network_id,
+                'admin_state_up': True
+            }
+        }
+        
+        if name:
+            port_data['port']['name'] = name
+        if fixed_ips:
+            port_data['port']['fixed_ips'] = fixed_ips
+        if security_groups:
+            port_data['port']['security_groups'] = security_groups
+        
+        return self.neutron.create_port(port_data)['port']
+    
+    def delete_port(self, port_id: str):
+        self.neutron.delete_port(port_id)
+    
+    def create_security_group(self, name: str, description: str = None) -> Dict:
+        sg_data = {
+            'security_group': {
+                'name': name,
+                'description': description or f'Security group {name}'
+            }
+        }
+        return self.neutron.create_security_group(sg_data)['security_group']
+    
+    def add_security_group_rule(self, security_group_id: str, direction: str = 'ingress',
+                               ethertype: str = 'IPv4', protocol: str = None,
+                               port_range_min: int = None, port_range_max: int = None,
+                               remote_ip_prefix: str = None) -> Dict:
+        rule_data = {
+            'security_group_rule': {
+                'security_group_id': security_group_id,
+                'direction': direction,
+                'ethertype': ethertype
+            }
+        }
+        
+        if protocol:
+            rule_data['security_group_rule']['protocol'] = protocol
+        if port_range_min:
+            rule_data['security_group_rule']['port_range_min'] = port_range_min
+        if port_range_max:
+            rule_data['security_group_rule']['port_range_max'] = port_range_max
+        if remote_ip_prefix:
+            rule_data['security_group_rule']['remote_ip_prefix'] = remote_ip_prefix
+        
+        return self.neutron.create_security_group_rule(rule_data)['security_group_rule']
+    
+    def list_images(self) -> List[Any]:
+        return list(self.glance.images.list())
+    
+    def get_image(self, image_id: str) -> Any:
+        return self.glance.images.get(image_id)
+    
+    def find_image(self, name: str) -> Optional[Any]:
+        images = self.list_images()
+        for image in images:
+            if image.name == name:
+                return image
+        return None
+    
+    def list_flavors(self) -> List[Any]:
+        return self.nova.flavors.list()
+    
+    def get_flavor(self, flavor_id: str) -> Any:
+        return self.nova.flavors.get(flavor_id)
+    
+    def find_flavor(self, name: str) -> Optional[Any]:
+        flavors = self.list_flavors()
+        for flavor in flavors:
+            if flavor.name == name:
+                return flavor
+        return None
+    
+    def create_flavor(self, name: str, ram: int, vcpus: int, disk: int) -> Any:
+        return self.nova.flavors.create(
+            name=name,
+            ram=ram,
+            vcpus=vcpus,
+            disk=disk
+        )

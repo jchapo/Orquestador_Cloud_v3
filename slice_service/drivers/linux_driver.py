@@ -23,46 +23,46 @@ logger = logging.getLogger(__name__)
 class LinuxClusterDriver(BaseDriver):
     """Driver para gestionar VMs en cluster Linux usando libvirt"""
     
-    def __init__(self):
+    def __init__(self, token=None):
         super().__init__()
         
         # Configuración del cluster según tu documento
         self.hypervisors = {
             'server1': {
                 'uri': 'qemu+ssh://ubuntu@pucp-server1/system',
-                'ip': 'pucp-server1',  # O usar la IP real si prefieres
+                'ip': 'pucp-server1',
                 'port': 5811,
-                'max_vcpus': 4,        # ← Corregido (viste "CPU cores: 4")
-                'max_ram': 4030,       # ← Corregido (viste "Memory: 3.8Gi")
-                'max_disk': 100
+                'max_vcpus': 3,      # Real: 4 cores
+                'max_ram': 3423,       # Real: 3935 MB total
+                'max_disk': 10     # Real: 4 GB total
             },
             'server2': {
-                'uri': 'qemu+ssh://ubuntu@pucp-server2/system',  # ← ubuntu, no root
+                'uri': 'qemu+ssh://ubuntu@pucp-server2/system',
                 'ip': 'pucp-server2',
                 'port': 5812,
-                'max_vcpus': 4,
-                'max_ram': 4030,
-                'max_disk': 100
+                'max_vcpus': 3,      # Real: 4 cores
+                'max_ram': 3423,       # Real: 3935 MB total
+                'max_disk': 10     # Real: 5 GB total
             },
             'server3': {
-                'uri': 'qemu+ssh://ubuntu@pucp-server3/system',  # ← ubuntu, no root
+                'uri': 'qemu+ssh://ubuntu@pucp-server3/system',
                 'ip': 'pucp-server3',
                 'port': 5813,
-                'max_vcpus': 4,
-                'max_ram': 4030,
-                'max_disk': 100
+                'max_vcpus': 3,      # Real: 4 cores
+                'max_ram': 3423,       # Real: 3935 MB total
+                'max_disk': 10     # Real: 4 GB total
             },
             'server4': {
-                'uri': 'qemu+ssh://ubuntu@pucp-server4/system',  # ← ubuntu, no root
+                'uri': 'qemu+ssh://ubuntu@pucp-server4/system',
                 'ip': 'pucp-server4',
                 'port': 5814,
-                'max_vcpus': 4,
-                'max_ram': 4030,
-                'max_disk': 100
-            }
+                'max_vcpus': 3,      # Real: 4 cores
+                'max_ram': 7433,       # Real: 7945 MB total
+                'max_disk': 10     # Real: 5 GB total
+            },
         }
 
-        self.network_client = NetworkServiceClient()
+        self.network_client = NetworkServiceClient(token=token)
 
         self.network_config = {
             'management': {
@@ -2249,9 +2249,20 @@ class LinuxClusterDriver(BaseDriver):
 class NetworkServiceClient:
     """Cliente para interactuar con Network Service"""
     
-    def __init__(self, base_url="http://localhost:5004"):
+    def __init__(self, base_url="http://localhost:5004", token=None):
         self.base_url = base_url
         self.timeout = 30
+        self.token = token
+        self.headers = {'Content-Type': 'application/json'}
+        
+        # Agregar autorización si tenemos token
+        if self.token:
+            self.headers['Authorization'] = f'Bearer {self.token}'
+    
+    def set_token(self, token: str):
+        """Establecer token de autenticación"""
+        self.token = token
+        self.headers['Authorization'] = f'Bearer {token}'
     
     def allocate_vlan(self, infrastructure: str, network_id: str, slice_id: str, 
                      description: str = None, network_type: str = 'data') -> Optional[int]:
@@ -2268,7 +2279,7 @@ class NetworkServiceClient:
             response = requests.post(
                 f"{self.base_url}/api/vlans/allocate",
                 json=payload,
-                headers={'Content-Type': 'application/json'},
+                headers=self.headers,  # ← Usar headers con auth
                 timeout=self.timeout
             )
             
@@ -2291,7 +2302,7 @@ class NetworkServiceClient:
             response = requests.post(
                 f"{self.base_url}/api/networks",
                 json=network_config,
-                headers={'Content-Type': 'application/json'},
+                headers=self.headers,  # ← Usar headers con auth
                 timeout=self.timeout
             )
             
@@ -2314,7 +2325,7 @@ class NetworkServiceClient:
                 response = requests.post(
                     f"{self.base_url}/api/networks/{network_id}/security-rules",
                     json=rule,
-                    headers={'Content-Type': 'application/json'},
+                    headers=self.headers,  # ← Usar headers con auth
                     timeout=self.timeout
                 )
                 
@@ -2334,7 +2345,7 @@ class NetworkServiceClient:
         try:
             response = requests.post(
                 f"{self.base_url}/api/vlans/slice/{slice_id}/release",
-                headers={'Content-Type': 'application/json'},
+                headers=self.headers,  # ← Usar headers con auth
                 timeout=self.timeout
             )
             
@@ -2349,4 +2360,3 @@ class NetworkServiceClient:
         except Exception as e:
             logger.error(f"Error releasing VLANs: {e}")
             return False
-        

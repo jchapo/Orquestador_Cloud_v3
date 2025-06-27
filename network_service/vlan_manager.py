@@ -75,19 +75,9 @@ class VLANManager:
             raise
     
     def allocate_vlan(self, infrastructure: str, network_id: str, 
-                     slice_id: str = None, description: str = None) -> Optional[int]:
-        """
-        Asigna una VLAN disponible del pool especificado
+                 slice_id: str = None, description: str = None) -> Optional[int]:
+        """Asigna una VLAN disponible del pool especificado"""
         
-        Args:
-            infrastructure: 'linux' o 'openstack'
-            network_id: ID de la red que usará esta VLAN
-            slice_id: ID del slice (opcional)
-            description: Descripción del uso (opcional)
-            
-        Returns:
-            VLAN ID asignada o None si no hay VLANs disponibles
-        """
         if infrastructure not in self.vlan_pools:
             logger.error(f"Infrastructure '{infrastructure}' not supported")
             return None
@@ -108,7 +98,7 @@ class VLANManager:
                 
                 vlan_id = available_vlan['vlan_id']
                 
-                # Marcar VLAN como asignada
+                # CORREGIR AQUÍ - Asegurar que los parámetros coincidan
                 self.db.execute('''
                     UPDATE vlan_pool SET 
                         state = ?,
@@ -122,18 +112,15 @@ class VLANManager:
                     network_id,
                     slice_id,
                     datetime.datetime.utcnow().isoformat(),
-                    description or f'Network {network_id}'
+                    description or f'Network {network_id}',
+                    vlan_id,
+                    infrastructure
                 ))
                 
                 self.db.commit()
                 logger.info(f"VLAN {vlan_id} allocated to network {network_id} in {infrastructure}")
                 return vlan_id
-                
-        except Exception as e:
-            logger.error(f"Error allocating VLAN: {e}")
-            self.db.rollback()
-            return None
-    
+
     def release_vlan(self, vlan_id: int, infrastructure: str) -> bool:
         """
         Libera una VLAN para reutilización

@@ -1,3 +1,18 @@
+#!/bin/bash
+# fix_image_service_complete.sh
+
+echo "🔧 Arreglando Image Service completamente..."
+
+IMAGE_SERVICE_DIR="/opt/pucp-orchestrator/image_service"
+IMAGE_SERVICE_FILE="$IMAGE_SERVICE_DIR/image_service.py"
+
+# 1. Hacer backup
+echo "📦 Creando backup..."
+cp $IMAGE_SERVICE_FILE ${IMAGE_SERVICE_FILE}.backup.$(date +%s)
+
+# 2. Crear versión corregida
+echo "✏️ Creando versión corregida..."
+cat > $IMAGE_SERVICE_FILE << 'EOF'
 #!/usr/bin/env python3
 from flask import Flask, request, jsonify, g
 from flask_cors import CORS
@@ -214,3 +229,19 @@ if __name__ == '__main__':
     init_db()
     logger.info("Starting Image Service on port 5005...")
     app.run(host='0.0.0.0', port=5005, debug=False)
+EOF
+
+echo "✅ Archivo corregido creado"
+
+# 3. Reiniciar el servicio
+echo "🔄 Reiniciando Image Service..."
+sudo systemctl restart pucp-image-service
+
+# 4. Esperar a que arranque
+sleep 3
+
+# 5. Verificar estado
+echo "📊 Verificando estado del servicio..."
+sudo systemctl status pucp-image-service --no-pager -l
+
+echo "✅ Image Service corregido y reiniciado"

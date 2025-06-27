@@ -49,3 +49,22 @@ class VMScheduler:
                     break
         
         return {'placement': placement, 'policy': 'energy_efficient'}
+    
+    def find_placement(self, slice_config: Dict, available_servers: Dict) -> Dict:
+    infrastructure = slice_config.get('infrastructure', 'linux')
+    
+    if infrastructure == 'openstack':
+        placement = {}
+        zones = list(set(s.get('availability_zone', 'nova') 
+                        for s in available_servers.values()))
+        
+        for i, vm in enumerate(slice_config.get('vms', [])):
+            zone = zones[i % len(zones)] if zones else 'nova'
+            placement[vm['name']] = {
+                'zone': zone,
+                'infrastructure': 'openstack'
+            }
+        
+        return placement
+    else:
+        return self._linux_placement(slice_config, available_servers)

@@ -97,12 +97,8 @@ class APIGateway:
         try:
             # Preparar URL
             if path.startswith('/api/'):
-                # Para Image Service, mantener /api/images completo
-                if 'images' in path:
-                    clean_path = path  # Mantener /api/images
-                else:
-                    # Para otros servicios, quitar /api/
-                    clean_path = path[4:]  # Quita '/api'
+                # Quitar el prefijo /api/ para el microservicio
+                clean_path = path[4:]  # Quita '/api'
             else:
                 clean_path = path
                 
