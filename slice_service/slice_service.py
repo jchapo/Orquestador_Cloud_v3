@@ -650,15 +650,13 @@ class VMPlacementEngine:
         
         return {'success': True, 'placement': placement}
 
-# Driver factory
-def get_driver(infrastructure: str) -> BaseDriver:
-    """Factory para obtener driver según infraestructura"""
+def get_driver(infrastructure: str, token: Optional[str] = None) -> BaseDriver:
     if infrastructure == 'linux':
-        return LinuxClusterDriver()
+        from .drivers.linux_driver import LinuxClusterDriver
+        return LinuxClusterDriver(token=token)
     elif infrastructure == 'openstack':
-        # Por implementar
-        from drivers.openstack_driver import OpenStackDriver
-        return OpenStackDriver()
+        from .drivers.openstack_driver import OpenStackDriver
+        return OpenStackDriver(token=token)
     else:
         raise ValueError(f"Unsupported infrastructure: {infrastructure}")
 
@@ -1299,16 +1297,9 @@ def deploy_slice(slice_id):
                 token = auth_header.split(' ')[1]
             
             # Obtener driver con token para Network Service
-            if slice_dict['infrastructure'] == 'linux':
-                driver = LinuxClusterDriver(token=token)
-                logger.info(f"✓ Linux driver initialized with authentication token")
-            elif slice_dict['infrastructure'] == 'openstack':
-                # Por implementar - OpenStack driver
-                from drivers.openstack_driver import OpenStackDriver
-                driver = OpenStackDriver(token=token)
-                logger.info(f"✓ OpenStack driver initialized with authentication token")
-            else:
-                raise ValueError(f"Unsupported infrastructure: {slice_dict['infrastructure']}")
+            from .orchestrator import Orchestrator
+            orchestrator = Orchestrator()
+            driver = orchestrator.select_driver(slice_dict['infrastructure'], token=token)
                 
         except ValueError as e:
             db.execute('''
