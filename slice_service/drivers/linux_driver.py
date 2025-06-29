@@ -62,7 +62,7 @@ class LinuxClusterDriver(BaseDriver):
             },
         }
 
-        self.network_client = NetworkServiceClient(token=token)
+        self.network_client = NetworkServiceClient(token=self._get_service_token())
 
         self.network_config = {
             'management': {
@@ -149,6 +149,27 @@ class LinuxClusterDriver(BaseDriver):
         
         self.connections = {}  # Cache de conexiones libvirt
     
+
+    def _get_service_token(self):
+        """Obtiene token de autenticación para comunicación entre servicios"""
+        try:
+            import requests
+            response = requests.post(
+                "http://localhost:5001/login",
+                json={"username": "testuser", "password": "testpass123"},
+                timeout=10
+            )
+            if response.status_code == 200:
+                token = response.json().get("token")
+                logger.info("✓ Token de servicio obtenido para Network Service")
+                return token
+            else:
+                logger.error(f"Error obteniendo token de servicio: {response.status_code}")
+                return None
+        except Exception as e:
+            logger.error(f"Excepción obteniendo token de servicio: {e}")
+            return None
+
     def get_connection(self, server_name: str) -> libvirt.virConnect:
         """Obtiene o crea conexión a un hypervisor"""
         if server_name not in self.hypervisors:
@@ -224,9 +245,13 @@ class LinuxClusterDriver(BaseDriver):
             }
 
     def _create_r5_network(self, network_config: Dict, slice_id: str) -> Dict:
-        """Crea una red específica según tipo R5 con integración Network Service"""
-        network_name = f"{slice_id}-{network_config['name']}"
+        """Crea una red específica según tipo R5 con nombres cortos"""
+        # USAR NOMBRE CORTO - solo los últimos 8 chars del slice_id + tipo
+        short_slice_id = slice_id[-8:]  # ej: ac8282
         network_type = network_config.get('network_type', 'data')
+        
+        # Nombre corto: ej "ac8282-ext" (10 chars)
+        network_name = f"{short_slice_id}-{network_type[:3]}"
         
         if network_type not in self.network_config:
             raise ValueError(f"Unsupported network type: {network_type}")
@@ -245,31 +270,38 @@ class LinuxClusterDriver(BaseDriver):
         else:
             raise ValueError(f"Network type {network_type} not implemented")
 
+    
     def _configure_ovs_trunk_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
-        """Configura VLAN trunk con integración Network Service"""
+        """Configura VLAN trunk con nombres cortos - CORREGIDO"""
         try:
+            # USAR NOMBRE CORTO para la interfaz
+            vlan_interface = f"vlan{vlan_id}"  # ej: vlan103 (7 chars)
+            
             ovs_commands = [
-                # Crear puerto trunk VLAN
-                f"ovs-vsctl add-port {bridge} {name} tag={vlan_id}",
+                # 1. Eliminar interfaz si existe (cleanup)
+                f"ovs-vsctl --if-exists del-port {bridge} {vlan_interface}",
                 
-                # Configurar como puerto interno
-                f"ovs-vsctl set interface {name} type=internal",
+                # 2. Crear puerto VLAN con nombre corto
+                f"ovs-vsctl add-port {bridge} {vlan_interface} tag={vlan_id}",
                 
-                # Configurar MTU optimizado
-                f"ip link set {name} mtu 1500",
+                # 3. Configurar como puerto interno
+                f"ovs-vsctl set interface {vlan_interface} type=internal",
                 
-                # Activar interfaz
-                f"ip link set {name} up",
+                # 4. Configurar MTU
+                f"ip link set {vlan_interface} mtu 1500",
                 
-                # Configurar IP del gateway en el bridge
-                f"ip addr add {config.get('gateway', '10.60.1.1')}/24 dev {name}",
+                # 5. Activar interfaz
+                f"ip link set {vlan_interface} up",
                 
-                # Habilitar forwarding para esta interfaz
-                f"echo 1 > /proc/sys/net/ipv4/conf/{name}/forwarding"
+                # 6. Configurar IP del gateway
+                f"ip addr add {config.get('gateway', '10.60.1.1')}/24 dev {vlan_interface}",
+                
+                # 7. Habilitar forwarding
+                f"echo 1 > /proc/sys/net/ipv4/conf/{vlan_interface}/forwarding"
             ]
             
             self._execute_ovs_commands(ovs_commands, "trunk network")
-            logger.info(f"✓ OVS trunk network {name} configured with VLAN {vlan_id}")
+            logger.info(f"✓ OVS trunk network {vlan_interface} configured with VLAN {vlan_id}")
             
         except Exception as e:
             logger.error(f"Error configuring OVS trunk integration: {e}")
@@ -1392,6 +1424,374 @@ class LinuxClusterDriver(BaseDriver):
             }        
     
     # Métodos privados auxiliares
+    def _cleanup_internet_access(self, vlan_id: int, cidr: str):
+        """Limpia configuración de acceso a internet para una VLAN"""
+        try:
+            logger.info(f"Cleaning up internet access for VLAN {vlan_id}")
+            
+            vlan_interface = f"vlan{vlan_id}"
+            outbound_interface = 'ens3'
+            
+            cleanup_commands = [
+                # Limpiar reglas NAT
+                f"iptables -t nat -D POSTROUTING -s {cidr} -o {outbound_interface} -j MASQUERADE 2>/dev/null || true",
+                
+                # Limpiar reglas de forwarding
+                f"iptables -D FORWARD -s {cidr} -o {outbound_interface} -j ACCEPT 2>/dev/null || true",
+                f"iptables -D FORWARD -i {outbound_interface} -d {cidr} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true",
+                
+                # Limpiar marcado de paquetes
+                f"iptables -t mangle -D PREROUTING -s {cidr} -j MARK --set-mark {vlan_id} 2>/dev/null || true",
+                
+                # Limpiar reglas de firewall específicas
+                f"iptables -D FORWARD -s {cidr} -p tcp --dport 80 -j ACCEPT 2>/dev/null || true",
+                f"iptables -D FORWARD -s {cidr} -p tcp --dport 443 -j ACCEPT 2>/dev/null || true",
+                f"iptables -D FORWARD -s {cidr} -p udp --dport 53 -j ACCEPT 2>/dev/null || true",
+                
+                # Limpiar rutas
+                f"ip route del {cidr} table internet 2>/dev/null || true",
+                f"ip rule del from {cidr} table internet 2>/dev/null || true",
+                
+                # Limpiar QoS
+                f"tc qdisc del dev {vlan_interface} root 2>/dev/null || true",
+                
+                # Limpiar DNS config
+                f"rm -f /etc/dnsmasq.d/vlan{vlan_id}.conf",
+                f"systemctl is-active dnsmasq && systemctl reload dnsmasq || true"
+            ]
+            
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in cleanup_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo bash -c "{cmd}"']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                except subprocess.CalledProcessError:
+                    # Es normal que algunos comandos fallen si las reglas no existen
+                    pass
+            
+            logger.info(f"✓ Internet access cleanup completed for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up internet access: {e}")
+            # No fallar el cleanup general por esto
+
+    def _configure_internet_access_integrated(self, vlan_id: int, cidr: str):
+        """
+        Configura acceso a internet para una VLAN específica con integración completa
+        
+        Args:
+            vlan_id: ID de la VLAN que tendrá acceso a internet
+            cidr: CIDR de la red que tendrá acceso (ej: "10.60.1.100/28")
+        """
+        try:
+            logger.info(f"Configuring internet access for VLAN {vlan_id} with CIDR {cidr}")
+            
+            # 1. Configurar NAT y masquerading
+            self._configure_nat_rules(vlan_id, cidr)
+            
+            # 2. Configurar reglas de firewall para internet
+            self._configure_internet_firewall_rules(vlan_id, cidr)
+            
+            # 3. Configurar routing para acceso a internet
+            self._configure_internet_routing(vlan_id, cidr)
+            
+            # 4. Configurar DNS forwarding
+            self._configure_dns_forwarding(vlan_id, cidr)
+            
+            # 5. Habilitar IP forwarding si no está habilitado
+            self._enable_ip_forwarding()
+            
+            # 6. Configurar reglas de QoS para internet (opcional)
+            self._configure_internet_qos(vlan_id, cidr)
+            
+            logger.info(f"✓ Internet access configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring internet access for VLAN {vlan_id}: {e}")
+            raise
+
+    def _configure_nat_rules(self, vlan_id: int, cidr: str):
+        """Configura reglas NAT para salida a internet"""
+        try:
+            # Determinar interfaz de salida (típicamente la interfaz con acceso a internet)
+            outbound_interface = 'ens3'  # Interfaz hacia el gateway/internet
+            vlan_interface = f"vlan{vlan_id}"
+            
+            nat_commands = [
+                # SNAT/Masquerading para salida a internet
+                f"iptables -t nat -A POSTROUTING -s {cidr} -o {outbound_interface} -j MASQUERADE",
+                
+                # Permitir forwarding desde la VLAN hacia internet
+                f"iptables -A FORWARD -s {cidr} -o {outbound_interface} -j ACCEPT",
+                
+                # Permitir respuestas de vuelta
+                f"iptables -A FORWARD -i {outbound_interface} -d {cidr} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
+                
+                # Marcar paquetes para tracking (útil para QoS y logging)
+                f"iptables -t mangle -A PREROUTING -s {cidr} -j MARK --set-mark {vlan_id}",
+                
+                # Logging opcional para debugging
+                f"iptables -A FORWARD -s {cidr} -j LOG --log-prefix 'VLAN{vlan_id}-OUT: ' --log-level 4" if logger.level == logging.DEBUG else ""
+            ]
+            
+            # Filtrar comandos vacíos
+            nat_commands = [cmd for cmd in nat_commands if cmd]
+            
+            # Ejecutar en servidor gateway (el que tiene acceso a internet)
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in nat_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    result = subprocess.run(ssh_cmd, check=True, capture_output=True, 
+                                        timeout=30, text=True)
+                    logger.debug(f"✓ NAT rule: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"✗ NAT rule failed: {cmd} - {e.stderr}")
+                    # Continuar con otros comandos, algunos pueden fallar si ya existen
+            
+            logger.info(f"✓ NAT rules configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring NAT rules: {e}")
+            raise
+
+    def _configure_internet_firewall_rules(self, vlan_id: int, cidr: str):
+        """Configura reglas de firewall específicas para acceso a internet - CORREGIDO"""
+        try:
+            firewall_commands = [
+                # Permitir tráfico HTTP/HTTPS saliente
+                f"iptables -A FORWARD -s {cidr} -p tcp --dport 80 -j ACCEPT",
+                f"iptables -A FORWARD -s {cidr} -p tcp --dport 443 -j ACCEPT",
+                
+                # Permitir DNS saliente (UDP y TCP)
+                f"iptables -A FORWARD -s {cidr} -p udp --dport 53 -j ACCEPT",
+                f"iptables -A FORWARD -s {cidr} -p tcp --dport 53 -j ACCEPT",
+                
+                # Permitir NTP
+                f"iptables -A FORWARD -s {cidr} -p udp --dport 123 -j ACCEPT",
+                
+                # Permitir SSH saliente
+                f"iptables -A FORWARD -s {cidr} -p tcp --dport 22 -j ACCEPT",
+                
+                # Permitir ICMP
+                f"iptables -A FORWARD -s {cidr} -p icmp -j ACCEPT",
+                
+                # CORREGIR: Bloquear acceso a redes privadas (reglas separadas)
+                f"iptables -A FORWARD -s {cidr} -d 192.168.0.0/16 -j DROP",
+                f"iptables -A FORWARD -s {cidr} -d 172.16.0.0/12 -j DROP",
+                f"iptables -A FORWARD -s {cidr} -d 10.0.0.0/8 -j DROP",
+                f"iptables -I FORWARD -s {cidr} -d {cidr} -j ACCEPT",  # Permitir tráfico interno
+                
+                # Permitir conexiones establecidas
+                f"iptables -A FORWARD -d {cidr} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT"
+            ]
+            
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in firewall_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    logger.debug(f"✓ Firewall rule: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"✗ Firewall rule failed: {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ Firewall rules configured for internet access VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring firewall rules: {e}")
+            raise
+
+    
+    def _configure_internet_routing(self, vlan_id: int, cidr: str):
+        """Configura routing específico para acceso a internet - CORREGIDO"""
+        try:
+            import ipaddress
+            network = ipaddress.IPv4Network(cidr, strict=False)
+            gateway_ip = str(list(network.hosts())[0])  # Primera IP como gateway
+            vlan_interface = f"vlan{vlan_id}"
+            
+            # Usar tabla numérica en lugar de nombre
+            table_id = 100 + vlan_id  # Tabla única por VLAN
+            
+            routing_commands = [
+                # NO configurar IP aquí - ya se hizo en OVS setup
+                
+                # Crear tabla de routing si no existe
+                f"echo '{table_id} vlan{vlan_id}' >> /etc/iproute2/rt_tables 2>/dev/null || true",
+                
+                # Configurar rutas en la tabla específica
+                f"ip route add {cidr} dev {vlan_interface} table {table_id}",
+                f"ip route add default via 10.60.1.1 table {table_id}",
+                
+                # Configurar policy routing
+                f"ip rule add from {cidr} table {table_id} priority {100 + vlan_id}",
+                
+                # Flush route cache
+                f"ip route flush cache"
+            ]
+            
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in routing_commands:
+                if not cmd:  # Skip empty commands
+                    continue
+                    
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    logger.debug(f"✓ Routing: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"✗ Routing command failed: {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ Internet routing configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring internet routing: {e}")
+            raise
+
+    def _configure_dns_forwarding(self, vlan_id: int, cidr: str):
+        """Configura forwarding de DNS para la red"""
+        try:
+            dns_commands = [
+                # Configurar dnsmasq para esta red (si está instalado)
+                f"systemctl is-active dnsmasq && echo 'interface=vlan{vlan_id}' >> /etc/dnsmasq.d/vlan{vlan_id}.conf || true",
+                f"systemctl is-active dnsmasq && echo 'dhcp-range=vlan{vlan_id},{cidr.split('/')[0].rsplit('.', 1)[0]}.10,{cidr.split('/')[0].rsplit('.', 1)[0]}.50,12h' >> /etc/dnsmasq.d/vlan{vlan_id}.conf || true",
+                f"systemctl is-active dnsmasq && systemctl reload dnsmasq || true",
+                
+                # Configurar resolv.conf para forwarding
+                f"echo 'nameserver 8.8.8.8' > /etc/resolv.conf.vlan{vlan_id}",
+                f"echo 'nameserver 1.1.1.1' >> /etc/resolv.conf.vlan{vlan_id}",
+                
+                # Configurar iptables para permitir DNS forwarding
+                f"iptables -A INPUT -i vlan{vlan_id} -p udp --dport 53 -j ACCEPT",
+                f"iptables -A INPUT -i vlan{vlan_id} -p tcp --dport 53 -j ACCEPT"
+            ]
+            
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in dns_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo bash -c "{cmd}"']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    logger.debug(f"✓ DNS: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.debug(f"DNS command (non-critical): {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ DNS forwarding configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring DNS forwarding: {e}")
+            # No fallar por DNS, es opcional
+            pass
+
+    def _enable_ip_forwarding(self):
+        """Habilita IP forwarding en el sistema"""
+        try:
+            forwarding_commands = [
+                # Habilitar IP forwarding temporalmente
+                "echo 1 > /proc/sys/net/ipv4/ip_forward",
+                
+                # Hacer permanente el cambio
+                "sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf",
+                "sed -i 's/net.ipv4.ip_forward=0/net.ipv4.ip_forward=1/' /etc/sysctl.conf",
+                
+                # Si no existe la línea, agregarla
+                "grep -q 'net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf",
+                
+                # Aplicar cambios
+                "sysctl -p"
+            ]
+            
+            # Aplicar en todos los servidores
+            for server_name in self.hypervisors.keys():
+                server_ip = self.hypervisors[server_name]['ip']
+                
+                for cmd in forwarding_commands:
+                    ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                            f'ubuntu@{server_ip}', f'sudo {cmd}']
+                    try:
+                        subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    except subprocess.CalledProcessError as e:
+                        logger.debug(f"IP forwarding command on {server_name}: {e.stderr}")
+            
+            logger.info("✓ IP forwarding enabled on all servers")
+            
+        except Exception as e:
+            logger.error(f"Error enabling IP forwarding: {e}")
+            raise
+
+    def _configure_internet_qos(self, vlan_id: int, cidr: str):
+        """Configura QoS para tráfico de internet (opcional)"""
+        try:
+            vlan_interface = f"vlan{vlan_id}"
+            
+            qos_commands = [
+                # Configurar traffic shaping básico
+                f"tc qdisc add dev {vlan_interface} root handle 1: htb default 30",
+                
+                # Clase principal (100 Mbps por defecto)
+                f"tc class add dev {vlan_interface} parent 1: classid 1:1 htb rate 100mbit",
+                
+                # Clase para tráfico de alta prioridad (50 Mbps garantizado)
+                f"tc class add dev {vlan_interface} parent 1:1 classid 1:10 htb rate 50mbit ceil 100mbit",
+                
+                # Clase para tráfico normal (30 Mbps garantizado)
+                f"tc class add dev {vlan_interface} parent 1:1 classid 1:20 htb rate 30mbit ceil 80mbit",
+                
+                # Clase para tráfico de baja prioridad (20 Mbps garantizado)
+                f"tc class add dev {vlan_interface} parent 1:1 classid 1:30 htb rate 20mbit ceil 60mbit",
+                
+                # Filtros para clasificar tráfico
+                f"tc filter add dev {vlan_interface} parent 1: protocol ip prio 1 u32 match ip dport 80 0xffff flowid 1:20",
+                f"tc filter add dev {vlan_interface} parent 1: protocol ip prio 1 u32 match ip dport 443 0xffff flowid 1:20",
+                f"tc filter add dev {vlan_interface} parent 1: protocol ip prio 1 u32 match ip dport 53 0xffff flowid 1:10",
+                f"tc filter add dev {vlan_interface} parent 1: protocol ip prio 2 u32 match ip src {cidr} flowid 1:30"
+            ]
+            
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in qos_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    logger.debug(f"✓ QoS: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.debug(f"QoS command (optional): {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ QoS configured for internet access VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.warning(f"QoS configuration failed (non-critical): {e}")
+            # QoS es opcional, no fallar por esto
+
+    def _get_internet_gateway_server(self) -> str:
+        """Determina qué servidor actúa como gateway de internet"""
+        # Por defecto, usar server1 como gateway
+        # En un entorno real, esto podría determinarse dinámicamente
+        gateway_server = 'server1'
+        
+        # Verificar que el servidor existe
+        if gateway_server not in self.hypervisors:
+            # Fallback al primer servidor disponible
+            gateway_server = list(self.hypervisors.keys())[0]
+            logger.warning(f"Using {gateway_server} as internet gateway (fallback)")
+        
+        return gateway_server
 
     def _allocate_vlan(self, vlan_range: Tuple[int, int], slice_id: str) -> Optional[int]:
         """Asigna una VLAN del rango especificado"""
@@ -2245,6 +2645,27 @@ class LinuxClusterDriver(BaseDriver):
         # Formato MAC: 52:54:XX:XX:XX:XX (prefijo KVM)
         mac = f"52:54:{hash_value[0:2]}:{hash_value[2:4]}:{hash_value[4:6]}:{hash_value[6:8]}"
         return mac
+
+
+    def _get_auth_token(self) -> Optional[str]:
+        """Obtiene token de autenticación para Network Service"""
+        try:
+            import requests
+            auth_response = requests.post(
+                'http://localhost:5001/login',
+                json={'username': 'testuser', 'password': 'testpass123'},
+                timeout=10
+            )
+            if auth_response.status_code == 200:
+                token = auth_response.json().get('token')
+                logger.info("✓ Token obtenido para Network Service")
+                return token
+            else:
+                logger.warning("No se pudo obtener token para Network Service")
+                return None
+        except Exception as e:
+            logger.warning(f"Error obteniendo token: {e}")
+            return None
 
 class NetworkServiceClient:
     """Cliente para interactuar con Network Service"""

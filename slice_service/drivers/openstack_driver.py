@@ -5,8 +5,8 @@ from typing import Dict, List, Any, Optional
 import ipaddress
 
 from .base_driver import BaseDriver
-from ..openstack.config import OpenStackConfig
-from ..openstack.api_client import OpenStackAPIClient
+from slice_service.openstack.config import OpenStackConfig
+from slice_service.openstack.api_client import OpenStackAPIClient
 
 logger = logging.getLogger(__name__)
 

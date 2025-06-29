@@ -16,8 +16,8 @@ import logging
 from functools import wraps
 from typing import Dict, List, Any, Optional
 import jwt
-from .drivers.linux_driver import LinuxClusterDriver
-from .drivers.base_driver import BaseDriver
+from drivers.linux_driver import LinuxClusterDriver
+from drivers.base_driver import BaseDriver
 import ipaddress
 
 # Configurar logging
@@ -32,7 +32,7 @@ CORS(app)
 
 # Configuración
 app.config['DATABASE'] = os.path.join(os.path.dirname(__file__), 'slice_service.db')
-app.config['SECRET_KEY'] = 'pucp-cloud-secret-2025'
+app.config['SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'pucp-cloud-secret-2025')
 app.config['LINUX_DRIVER_URL'] = os.getenv('LINUX_DRIVER_URL', 'http://localhost:6001')
 app.config['OPENSTACK_DRIVER_URL'] = os.getenv('OPENSTACK_DRIVER_URL', 'http://localhost:6002')
 app.config['RESOURCE_MANAGER_URL'] = os.getenv('RESOURCE_MANAGER_URL', 'http://localhost:6003')
@@ -651,10 +651,10 @@ class VMPlacementEngine:
 
 def get_driver(infrastructure: str, token: Optional[str] = None) -> BaseDriver:
     if infrastructure == 'linux':
-        from .drivers.linux_driver import LinuxClusterDriver
+        from drivers.linux_driver import LinuxClusterDriver
         return LinuxClusterDriver(token=token)
     elif infrastructure == 'openstack':
-        from .drivers.openstack_driver import OpenStackDriver
+        from slice_service.drivers.openstack_driver import OpenStackDriver
         return OpenStackDriver(token=token)
     else:
         raise ValueError(f"Unsupported infrastructure: {infrastructure}")
@@ -1296,7 +1296,7 @@ def deploy_slice(slice_id):
                 token = auth_header.split(' ')[1]
             
             # Obtener driver con token para Network Service
-            from .orchestrator import Orchestrator
+            from orchestrator import Orchestrator
             orchestrator = Orchestrator()
             driver = orchestrator.select_driver(slice_dict['infrastructure'], token=token)
                 

@@ -12,7 +12,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 slice_service_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'slice_service')
 sys.path.append(slice_service_path)
 
-from drivers.openstack_driver import OpenStackDriver
+from slice_service.drivers.openstack_driver import OpenStackDriver
 
 def test_openstack_authentication():
     print("🔐 Testing OpenStack Authentication...")

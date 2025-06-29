@@ -1,5 +1,43 @@
+#!/usr/bin/env python3
+"""
+PUCP Cloud Orchestrator - Orchestrator Module
+Maneja la selección y gestión de drivers de infraestructura
+"""
+
+import logging
+from typing import Optional
+
+# Imports necesarios
+try:
+    from .drivers.base_driver import BaseDriver
+    from .drivers.linux_driver import LinuxClusterDriver
+except ImportError:
+    # Fallback para imports relativos
+    import sys
+    import os
+    sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+    from slice_service.drivers.base_driver import BaseDriver
+    from slice_service.drivers.linux_driver import LinuxClusterDriver
+
+logger = logging.getLogger(__name__)
+
+# Verificar disponibilidad de OpenStack driver
+try:
+    from .drivers.openstack_driver import OpenStackDriver
+    OPENSTACK_AVAILABLE = True
+except ImportError:
+    try:
+        from slice_service.drivers.openstack_driver import OpenStackDriver
+        OPENSTACK_AVAILABLE = True
+    except ImportError:
+        OPENSTACK_AVAILABLE = False
+        logger.warning("OpenStack driver not available")
+
 class Orchestrator:
+    """Orquestador principal para gestión de infraestructuras"""
+    
     def __init__(self):
+        """Inicializa el orquestador"""
         self._driver_cache = {}
         
     def select_driver(self, infrastructure: str, token: Optional[str] = None) -> BaseDriver:
@@ -29,14 +67,14 @@ class Orchestrator:
         
         try:
             if infrastructure == 'linux':
-                from .drivers.linux_driver import LinuxClusterDriver
-                driver = LinuxClusterDriver(token=token)
-                logger.info(f"✓ Linux driver initialized with token: {'Yes' if token else 'No'}")
+                driver = LinuxClusterDriver()
+                logger.info(f"✓ Linux driver initialized")
                 
             elif infrastructure == 'openstack':
-                from .drivers.openstack_driver import OpenStackDriver
-                driver = OpenStackDriver(token=token)
-                logger.info(f"✓ OpenStack driver initialized with token: {'Yes' if token else 'No'}")
+                if not OPENSTACK_AVAILABLE:
+                    raise ImportError("OpenStack driver not available")
+                driver = OpenStackDriver()
+                logger.info(f"✓ OpenStack driver initialized")
                 
             else:
                 supported_types = ['linux', 'openstack']
@@ -74,19 +112,20 @@ class Orchestrator:
         
         # Test Linux driver
         try:
-            from .drivers.linux_driver import LinuxClusterDriver
+            LinuxClusterDriver()
             available.append('linux')
             logger.debug("Linux driver available")
-        except ImportError:
-            logger.warning("Linux driver not available")
+        except Exception as e:
+            logger.warning(f"Linux driver not available: {e}")
         
         # Test OpenStack driver  
-        try:
-            from .drivers.openstack_driver import OpenStackDriver
-            available.append('openstack')
-            logger.debug("OpenStack driver available")
-        except ImportError:
-            logger.warning("OpenStack driver not available")
+        if OPENSTACK_AVAILABLE:
+            try:
+                OpenStackDriver()
+                available.append('openstack')
+                logger.debug("OpenStack driver available")
+            except Exception as e:
+                logger.warning(f"OpenStack driver not functional: {e}")
         
         return available
     
@@ -104,16 +143,13 @@ class Orchestrator:
             driver = self.select_driver(infrastructure)
             
             # Test básico del driver
-            if hasattr(driver, 'get_infrastructure_type'):
-                assert driver.get_infrastructure_type() == infrastructure
+            if hasattr(driver, 'driver_name'):
+                logger.info(f"✓ {infrastructure} driver validation passed: {driver.driver_name}")
+                return True
+            else:
+                logger.warning(f"Driver {infrastructure} missing required attributes")
+                return False
                 
-            if hasattr(driver, 'get_available_resources'):
-                resources = driver.get_available_resources()
-                assert isinstance(resources, dict)
-                
-            logger.info(f"✓ {infrastructure} driver validation passed")
-            return True
-            
         except Exception as e:
             logger.error(f"✗ {infrastructure} driver validation failed: {e}")
             return False

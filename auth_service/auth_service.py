@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
-app.config['SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'pucp-cloud-secret-2025')
+app.config['SECRET_KEY'] = 'pucp-cloud-secret-2025'
 app.config['DATABASE'] = os.path.join(os.path.dirname(__file__), 'auth_service.db')
 
 def get_db():

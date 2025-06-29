@@ -8,6 +8,7 @@ from flask_cors import CORS
 import logging
 import traceback
 import uuid
+from slice_service.drivers.openstack_driver import OpenStackDriver
 import time
 from datetime import datetime
 from functools import wraps

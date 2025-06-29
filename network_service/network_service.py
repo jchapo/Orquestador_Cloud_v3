@@ -32,7 +32,7 @@ CORS(app)
 
 # Configuración
 app.config['DATABASE'] = os.path.join(os.path.dirname(__file__), 'network_service.db')
-app.config['SECRET_KEY'] = os.getenv('JWT_SECRET_KEY', 'pucp-cloud-secret-2025')
+app.config['SECRET_KEY'] = 'pucp-cloud-secret-2025'
 app.config['OPENFLOW_CONTROLLER_URL'] = os.getenv('OPENFLOW_CONTROLLER_URL', 'http://localhost:6633')
 app.config['OVS_MANAGER_URL'] = os.getenv('OVS_MANAGER_URL', 'http://localhost:6634')
 
@@ -594,7 +594,7 @@ def create_network():
             ))
             
             # Asignar VLAN
-            allocate_vlan(vlan_id, network_id, db)
+            vlan_manager.allocate_vlan(vlan_id, network_id, db)
             
             # Crear reglas de seguridad por defecto
             default_rules = [
@@ -738,7 +738,7 @@ def delete_network(network_id):
             
             # Liberar VLAN usando VLAN Manager
             vlan_manager = get_vlan_manager(db)
-            vlan_released = vlan_manager.release_vlan_by_network(network_id)
+            vlan_released = release_vlan_by_network(network_id)
             
             if vlan_released:
                 logger.info(f"VLAN released for network {network_id}")
