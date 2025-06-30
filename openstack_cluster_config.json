@@ -2,9 +2,9 @@
     "cluster_name": "pucp_openstack_cluster",
     "infrastructure_type": "openstack",
     "auth": {
-        "auth_url": "http://10.60.2.21:5000/v3",
+        "auth_url": "http://localhost:15000/v3",
         "username": "admin",
-        "password": "openstack123",
+        "password": "admin123",
         "project_name": "admin",
         "user_domain_name": "Default",
         "project_domain_name": "Default",
@@ -13,82 +13,34 @@
     "compute_nodes": {
         "headnode": {
             "hostname": "pucp-headnode",
-            "management_ip": "10.60.2.21",
-            "ssh_port": 5821,
+            "management_ip": "192.168.202.1",
             "role": "controller",
             "services": ["keystone", "nova", "neutron", "glance", "horizon"]
         },
         "worker1": {
             "hostname": "pucp-worker1",
-            "management_ip": "10.60.2.22",
-            "ssh_port": 5822,
+            "management_ip": "192.168.202.2",
             "role": "compute",
             "availability_zone": "nova"
         },
         "worker2": {
             "hostname": "pucp-worker2",
-            "management_ip": "10.60.2.23",
-            "ssh_port": 5823,
+            "management_ip": "192.168.202.3",
             "role": "compute",
             "availability_zone": "nova"
         },
         "worker3": {
             "hostname": "pucp-worker3",
-            "management_ip": "10.60.2.24",
-            "ssh_port": 5824,
+            "management_ip": "192.168.202.4",
             "role": "compute",
             "availability_zone": "nova"
         }
     },
-    "network_config": {
-        "provider_network": "provider",
-        "external_network": "external",
-        "management_network": "management",
-        "tenant_network_type": "vlan",
-        "vlan_range": "200:299",
-        "physical_network": "physnet1",
-        "bridge_mappings": "physnet1:br-ex",
-        "ovs_bridge": "ovs2"
-    },
     "flavors": {
-        "small": {
-            "vcpus": 1,
-            "ram": 512,
-            "disk": 10
-        },
-        "medium": {
-            "vcpus": 2,
-            "ram": 1024,
-            "disk": 20
-        },
-        "large": {
-            "vcpus": 2,
-            "ram": 2048,
-            "disk": 40
-        }
+        "small": {"vcpus": 1, "ram": 512, "disk": 10},
+        "medium": {"vcpus": 2, "ram": 1024, "disk": 20}
     },
     "images": {
-        "ubuntu-20.04": {
-            "name": "ubuntu-20.04-server",
-            "file": "ubuntu-20.04-server-cloudimg-amd64.img",
-            "format": "qcow2",
-            "min_disk": 10,
-            "min_ram": 512
-        },
-        "cirros": {
-            "name": "cirros-0.5.2",
-            "file": "cirros-0.5.2-x86_64-disk.img",
-            "format": "qcow2",
-            "min_disk": 1,
-            "min_ram": 64
-        }
-    },
-    "quotas": {
-        "instances": 50,
-        "cores": 100,
-        "ram": 102400,
-        "floating_ips": 20,
-        "security_groups": 50,
-        "security_group_rules": 200
+        "cirros-0.5.2": {"name": "cirros-0.5.2", "format": "qcow2"}
     }
 }
