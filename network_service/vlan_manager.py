@@ -74,6 +74,7 @@ class VLANManager:
             self.db.rollback()
             raise
     
+    
     def allocate_vlan(self, infrastructure: str, network_id: str, 
                  slice_id: str = None, description: str = None) -> Optional[int]:
         """Asigna una VLAN disponible del pool especificado"""
@@ -98,7 +99,7 @@ class VLANManager:
                 
                 vlan_id = available_vlan['vlan_id']
                 
-                # CORREGIR AQUÍ - Asegurar que los parámetros coincidan
+                # Asignar la VLAN
                 self.db.execute('''
                     UPDATE vlan_pool SET 
                         state = ?,
@@ -120,80 +121,53 @@ class VLANManager:
                 self.db.commit()
                 logger.info(f"VLAN {vlan_id} allocated to network {network_id} in {infrastructure}")
                 return vlan_id
-
+                
         except Exception as e:
             logger.error(f"Error allocating VLAN: {e}")
             self.db.rollback()
-            return
+            return None
 
-        def release_vlan(self, vlan_id: int, infrastructure: str) -> bool:
-            try:
-                with self.lock:
-                    # Verificar que la VLAN esté asignada
-                    vlan_info = self.db.execute('''
-                        SELECT vlan_id, state, network_id FROM vlan_pool 
-                        WHERE vlan_id = ? AND infrastructure = ?
-                    ''', (vlan_id, infrastructure)).fetchone()
-                    
-                    if not vlan_info:
-                        logger.warning(f"VLAN {vlan_id} not found in {infrastructure} pool")
-                        return False
-                    
-                    if vlan_info['state'] != VLANState.ALLOCATED.value:
-                        logger.warning(f"VLAN {vlan_id} is not allocated (state: {vlan_info['state']})")
-                        return False
-                    
-                    # Liberar la VLAN
-                    self.db.execute('''
-                        UPDATE vlan_pool SET 
-                            state = ?,
-                            network_id = NULL,
-                            slice_id = NULL,
-                            released_at = ?,
-                            usage_description = NULL
-                        WHERE vlan_id = ? AND infrastructure = ?
-                    ''', (
-                        VLANState.AVAILABLE.value,
-                        datetime.datetime.utcnow().isoformat(),
-                        vlan_id,
-                        infrastructure
-                    ))
-                    
-                    self.db.commit()
-                    logger.info(f"VLAN {vlan_id} released in {infrastructure}")
-                    return True
-                    
-            except Exception as e:
-                logger.error(f"Error releasing VLAN {vlan_id}: {e}")
-                self.db.rollback()
-                return False
-    
-    def release_vlan_by_network(self, network_id: str) -> bool:
-        """
-        Libera la VLAN asignada a una red específica
-        
-        Args:
-            network_id: ID de la red
-            
-        Returns:
-            True si se liberó correctamente, False en caso contrario
-        """
+    def release_vlan(self, vlan_id: int, infrastructure: str) -> bool:
+        """Libera una VLAN específica"""
         try:
             with self.lock:
-                # Buscar la VLAN asignada a esta red
+                # Verificar que la VLAN esté asignada
                 vlan_info = self.db.execute('''
-                    SELECT vlan_id, infrastructure FROM vlan_pool 
-                    WHERE network_id = ? AND state = ?
-                ''', (network_id, VLANState.ALLOCATED.value)).fetchone()
+                    SELECT vlan_id, state, network_id FROM vlan_pool 
+                    WHERE vlan_id = ? AND infrastructure = ?
+                ''', (vlan_id, infrastructure)).fetchone()
                 
                 if not vlan_info:
-                    logger.warning(f"No allocated VLAN found for network {network_id}")
+                    logger.warning(f"VLAN {vlan_id} not found in {infrastructure} pool")
                     return False
                 
-                return self.release_vlan(vlan_info['vlan_id'], vlan_info['infrastructure'])
+                if vlan_info['state'] != VLANState.ALLOCATED.value:
+                    logger.warning(f"VLAN {vlan_id} is not allocated (state: {vlan_info['state']})")
+                    return False
+                
+                # Liberar la VLAN
+                self.db.execute('''
+                    UPDATE vlan_pool SET 
+                        state = ?,
+                        network_id = NULL,
+                        slice_id = NULL,
+                        released_at = ?,
+                        usage_description = NULL
+                    WHERE vlan_id = ? AND infrastructure = ?
+                ''', (
+                    VLANState.AVAILABLE.value,
+                    datetime.datetime.utcnow().isoformat(),
+                    vlan_id,
+                    infrastructure
+                ))
+                
+                self.db.commit()
+                logger.info(f"VLAN {vlan_id} released in {infrastructure}")
+                return True
                 
         except Exception as e:
-            logger.error(f"Error releasing VLAN for network {network_id}: {e}")
+            logger.error(f"Error releasing VLAN {vlan_id}: {e}")
+            self.db.rollback()
             return False
     
     def release_slice_vlans(self, slice_id: str) -> int:

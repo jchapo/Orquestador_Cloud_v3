@@ -594,7 +594,7 @@ def create_network():
             ))
             
             # Asignar VLAN
-            vlan_manager.allocate_vlan(vlan_id, network_id, db)
+            #vlan_manager.allocate_vlan(vlan_id, network_id, db)
             
             # Crear reglas de seguridad por defecto
             default_rules = [

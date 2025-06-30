@@ -11,22 +11,22 @@ from slice_service.openstack.api_client import OpenStackAPIClient
 logger = logging.getLogger(__name__)
 
 class OpenStackDriver(BaseDriver):
-    
+
     def __init__(self):
         super().__init__()
-        
+
         self.config = OpenStackConfig()
-        
+
         self.api_client = OpenStackAPIClient(self.config.get_auth_config())
-        
+
         self._flavors_cache = {}
         self._images_cache = {}
         self._networks_cache = {}
-        
+
         self._verify_connection()
-        
+
         logger.info("Controlador de OpenStack inicializado exitosamente")
-    
+
     def _verify_connection(self):
         try:
             self.api_client.session.get_token()
@@ -36,16 +36,16 @@ class OpenStackDriver(BaseDriver):
         except Exception as e:
             logger.error(f"Error al conectar con OpenStack: {e}")
             raise
-    
+
     def get_infrastructure_type(self) -> str:
         return "openstack"
-    
+
     def get_available_resources(self) -> Dict[str, Any]:
         try:
             hypervisor_stats = self.api_client.nova.hypervisor_stats.statistics()
             quotas = self.api_client.nova.quotas.get(self.config.auth['project_name'])
             servers = self.api_client.list_servers()
-            
+
             resources = {
                 'infrastructure': 'openstack',
                 'hypervisors': {
@@ -68,10 +68,10 @@ class OpenStackDriver(BaseDriver):
                 'availability_zones': self.config.get_availability_zones(),
                 'current_instances': len(servers)
             }
-            
+
             hypervisors = self.api_client.nova.hypervisors.list()
             resources['hypervisor_details'] = {}
-            
+
             for hypervisor in hypervisors:
                 resources['hypervisor_details'][hypervisor.hypervisor_hostname] = {
                     'vcpus': hypervisor.vcpus,
@@ -84,22 +84,22 @@ class OpenStackDriver(BaseDriver):
                     'state': hypervisor.state,
                     'status': hypervisor.status
                 }
-            
+
             return resources
-            
+
         except Exception as e:
             logger.error(f"Error al obtener los recursos de OpenStack: {e}")
             raise
-    
+
     def _ensure_flavor_exists(self, flavor_name: str) -> str:
         if flavor_name in self._flavors_cache:
             return self._flavors_cache[flavor_name]
-        
+
         flavor = self.api_client.find_flavor(flavor_name)
         if flavor:
             self._flavors_cache[flavor_name] = flavor.id
             return flavor.id
-        
+
         if flavor_name in self.config.flavors:
             flavor_config = self.config.flavors[flavor_name]
             flavor = self.api_client.create_flavor(
@@ -113,43 +113,43 @@ class OpenStackDriver(BaseDriver):
             return flavor.id
         else:
             raise ValueError(f"Sabor desconocido: {flavor_name}")
-    
+
     def _ensure_image_exists(self, image_name: str) -> str:
         if image_name in self._images_cache:
             return self._images_cache[image_name]
-        
+
         image = self.api_client.find_image(image_name)
         if image:
             self._images_cache[image_name] = image.id
             return image.id
-        
+
         image_mappings = {
             'ubuntu-20.04': 'ubuntu-20.04-server',
             'ubuntu': 'ubuntu-20.04-server',
             'cirros': 'cirros-0.5.2'
         }
-        
+
         mapped_name = image_mappings.get(image_name, image_name)
         image = self.api_client.find_image(mapped_name)
         if image:
             self._images_cache[image_name] = image.id
             return image.id
-        
+
         raise ValueError(f"Imagen no encontrada: {image_name}")
-    
+
     def create_vm(self, vm_config: Dict[str, Any], placement: Dict[str, Any] = None) -> Dict[str, Any]:
         try:
             vm_name = vm_config['name']
             logger.info(f"Creando la VM {vm_name} en OpenStack")
-            
+
             flavor_id = self._ensure_flavor_exists(vm_config.get('flavor', 'small'))
             image_id = self._ensure_image_exists(vm_config.get('image', 'ubuntu-20.04'))
-            
+
             network_id = None
             if 'network' in vm_config:
                 network = self._ensure_network_exists(vm_config['network'])
                 network_id = network['id']
-            
+
             availability_zone = None
             if placement and 'zone' in placement:
                 availability_zone = placement['zone']
@@ -158,7 +158,7 @@ class OpenStackDriver(BaseDriver):
                     if node['hostname'] == placement['hostname']:
                         availability_zone = node.get('availability_zone', 'nova')
                         break
-            
+
             security_groups = vm_config.get('security_groups', ['default'])
             user_data = vm_config.get('user_data', '')
             if not user_data:
@@ -166,7 +166,7 @@ class OpenStackDriver(BaseDriver):
 hostname: {vm_name}
 manage_etc_hosts: true
 """
-            
+
             server = self.api_client.create_server(
                 name=vm_name,
                 image_id=image_id,
@@ -176,17 +176,17 @@ manage_etc_hosts: true
                 availability_zone=availability_zone,
                 user_data=user_data
             )
-            
+
             logger.info(f"Esperando a que la VM {vm_name} se active...")
             if self.api_client.wait_for_server_active(server.id, timeout=300):
                 server = self.api_client.get_server(server.id)
-                
+
                 ip_address = None
                 for network_name, addresses in server.addresses.items():
                     if addresses:
                         ip_address = addresses[0]['addr']
                         break
-                
+
                 result = {
                     'id': server.id,
                     'name': server.name,
@@ -198,21 +198,21 @@ manage_etc_hosts: true
                     'created_at': server.created,
                     'infrastructure': 'openstack'
                 }
-                
+
                 logger.info(f"VM {vm_name} creada exitosamente: {result}")
                 return result
             else:
                 raise Exception(f"Tiempo de espera agotado para que la VM {vm_name} se active")
-            
+
         except Exception as e:
             logger.error(f"Error al crear la VM {vm_config['name']}: {e}")
             raise
-    
+
     def delete_vm(self, vm_id: str) -> bool:
         try:
             logger.info(f"Eliminando la VM {vm_id} de OpenStack")
             self.api_client.delete_server(vm_id)
-            
+
             start_time = time.time()
             while time.time() - start_time < 60:
                 try:
@@ -221,24 +221,24 @@ manage_etc_hosts: true
                 except Exception:
                     logger.info(f"VM {vm_id} eliminada exitosamente")
                     return True
-            
+
             logger.warning(f"Tiempo de espera agotado para eliminar la VM {vm_id}")
             return False
-            
+
         except Exception as e:
             logger.error(f"Error al eliminar la VM {vm_id}: {e}")
             raise
-    
+
     def get_vm_info(self, vm_id: str) -> Dict[str, Any]:
         try:
             server = self.api_client.get_server(vm_id)
-            
+
             ip_address = None
             for network_name, addresses in server.addresses.items():
                 if addresses:
                     ip_address = addresses[0]['addr']
                     break
-            
+
             return {
                 'id': server.id,
                 'name': server.name,
@@ -250,36 +250,36 @@ manage_etc_hosts: true
                 'host': getattr(server, 'OS-EXT-SRV-ATTR:host', 'unknown'),
                 'infrastructure': 'openstack'
             }
-            
+
         except Exception as e:
             logger.error(f"Error al obtener la información de la VM {vm_id}: {e}")
             raise
-    
+
     def _ensure_network_exists(self, network_config: Dict[str, Any]) -> Dict[str, Any]:
         network_name = network_config.get('name', f"slice-net-{uuid.uuid4().hex[:8]}")
-        
+
         networks = self.api_client.list_networks()
         for net in networks:
             if net['name'] == network_name:
                 logger.info(f"Usando red existente: {network_name}")
                 return net
-        
+
         vlan_start, vlan_end = self.config.get_vlan_range()
-        
+
         used_vlans = set()
         for net in networks:
             if 'provider:segmentation_id' in net:
                 used_vlans.add(net['provider:segmentation_id'])
-        
+
         vlan_id = None
         for vid in range(vlan_start, vlan_end + 1):
             if vid not in used_vlans:
                 vlan_id = vid
                 break
-        
+
         if not vlan_id:
             raise Exception("No hay VLANs disponibles")
-        
+
         network = self.api_client.create_network(
             name=network_name,
             provider_network_type='vlan',
@@ -287,15 +287,15 @@ manage_etc_hosts: true
             provider_segmentation_id=vlan_id,
             shared=False
         )
-        
+
         logger.info(f"Red {network_name} creada con VLAN {vlan_id}")
-        
+
         cidr = network_config.get('cidr', f'10.60.{vlan_id}.0/24')
         gateway = network_config.get('gateway')
         if not gateway:
             network_obj = ipaddress.IPv4Network(cidr)
             gateway = str(list(network_obj.hosts())[0])
-        
+
         subnet = self.api_client.create_subnet(
             network_id=network['id'],
             cidr=cidr,
@@ -304,11 +304,11 @@ manage_etc_hosts: true
             enable_dhcp=True,
             dns_nameservers=['8.8.8.8', '8.8.4.4']
         )
-        
+
         logger.info(f"Subred {subnet['name']} creada con CIDR {cidr}")
-        
+
         return network
-    
+
     def create_network(self, network_config: Dict[str, Any]) -> Dict[str, Any]:
         try:
             network = self._ensure_network_exists(network_config)
@@ -322,7 +322,7 @@ manage_etc_hosts: true
         except Exception as e:
             logger.error(f"Error al crear la red: {e}")
             raise
-    
+
     def delete_network(self, network_id: str) -> bool:
         try:
             logger.info(f"Eliminando la red {network_id}")
@@ -330,26 +330,26 @@ manage_etc_hosts: true
             for port in ports:
                 if port['device_owner'] not in ['network:dhcp', 'network:router_interface']:
                     self.api_client.delete_port(port['id'])
-            
+
             subnets = self.api_client.neutron.list_subnets(network_id=network_id)['subnets']
             for subnet in subnets:
                 self.api_client.neutron.delete_subnet(subnet['id'])
-            
+
             self.api_client.delete_network(network_id)
             logger.info(f"Red {network_id} eliminada exitosamente")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error al eliminar la red {network_id}: {e}")
             return False
-    
+
     def create_security_group(self, name: str, rules: List[Dict[str, Any]]) -> str:
         try:
             sg = self.api_client.create_security_group(
                 name=name,
                 description=f"Grupo de seguridad para {name}"
             )
-            
+
             for rule in rules:
                 self.api_client.add_security_group_rule(
                     security_group_id=sg['id'],
@@ -360,14 +360,14 @@ manage_etc_hosts: true
                     port_range_max=rule.get('port_range_max'),
                     remote_ip_prefix=rule.get('remote_ip_prefix')
                 )
-            
+
             logger.info(f"Grupo de seguridad {name} creado con {len(rules)} reglas")
             return sg['id']
-            
+
         except Exception as e:
             logger.error(f"Error al crear el grupo de seguridad {name}: {e}")
             raise
-    
+
     def get_console_url(self, vm_id: str) -> str:
         try:
             console = self.api_client.nova.servers.get_vnc_console(
@@ -377,15 +377,15 @@ manage_etc_hosts: true
         except Exception as e:
             logger.error(f"Error al obtener la URL de consola para {vm_id}: {e}")
             return None
-    
+
     def deploy_slice(self, slice_config: Dict[str, Any], placement: Dict[str, Any]) -> Dict[str, Any]:
         deployed_vms = []
         created_networks = []
         created_security_groups = []
         errors = []
-        
+
         slice_id = slice_config.get('id', str(uuid.uuid4()))
-        
+
         try:
             sg_name = f"slice-{slice_id}"
             sg_rules = [
@@ -407,44 +407,44 @@ manage_etc_hosts: true
                     'remote_ip_prefix': '0.0.0.0/0'
                 }
             ]
-            
+
             if 'security_rules' in slice_config:
                 sg_rules.extend(slice_config['security_rules'])
-            
+
             sg_id = self.create_security_group(sg_name, sg_rules)
             created_security_groups.append(sg_id)
-            
+
             for network_config in slice_config.get('networks', []):
                 network = self.create_network(network_config)
                 created_networks.append(network)
                 network_config['id'] = network['id']
-            
+
             for vm_config in slice_config.get('vms', []):
                 try:
                     vm_name = vm_config['name']
-                    
+
                     vm_config['security_groups'] = [sg_name]
-                    
+
                     if 'networks' in vm_config and vm_config['networks']:
                         network_name = vm_config['networks'][0]
                         for net in slice_config.get('networks', []):
                             if net['name'] == network_name:
                                 vm_config['network'] = net
                                 break
-                    
+
                     vm_placement = placement.get(vm_name, {})
-                    
+
                     vm_result = self.create_vm(vm_config, vm_placement)
                     deployed_vms.append(vm_result)
-                    
+
                 except Exception as e:
                     error_msg = f"Error al desplegar la VM {vm_config['name']}: {str(e)}"
                     logger.error(error_msg)
                     errors.append(error_msg)
-            
+
             logger.info("Esperando a que todas las VMs estén listas...")
             time.sleep(10)
-            
+
             return {
                 'slice_id': slice_id,
                 'status': 'error' if errors else 'deployed',
@@ -454,43 +454,43 @@ manage_etc_hosts: true
                 'errors': errors,
                 'infrastructure': 'openstack'
             }
-            
+
         except Exception as e:
             logger.error(f"Error al desplegar el slice: {e}")
-            
+
             for vm in deployed_vms:
                 try:
                     self.delete_vm(vm['id'])
                 except:
                     pass
-            
+
             for network in created_networks:
                 try:
                     self.delete_network(network['id'])
                 except:
                     pass
-            
+
             raise
-    
+
     def delete_slice(self, slice_id: str, slice_vms: List[Dict], slice_networks: List[Dict]) -> bool:
         try:
             logger.info(f"Eliminando el slice {slice_id} de OpenStack")
-            
+
             for vm in slice_vms:
                 try:
                     self.delete_vm(vm['external_id'])
                 except Exception as e:
                     logger.error(f"Error al eliminar la VM {vm['name']}: {e}")
-            
+
             time.sleep(5)
-            
+
             for network in slice_networks:
                 try:
                     if 'external_id' in network:
                         self.delete_network(network['external_id'])
                 except Exception as e:
                     logger.error(f"Error al eliminar la red {network.get('name', 'desconocida')}: {e}")
-            
+
             try:
                 sg_name = f"slice-{slice_id}"
                 sgs = self.api_client.neutron.list_security_groups(name=sg_name)['security_groups']
@@ -498,19 +498,19 @@ manage_etc_hosts: true
                     self.api_client.neutron.delete_security_group(sg['id'])
             except Exception as e:
                 logger.error(f"Error al eliminar los grupos de seguridad: {e}")
-            
+
             logger.info(f"Slice {slice_id} eliminado exitosamente")
             return True
-            
+
         except Exception as e:
             logger.error(f"Error al eliminar el slice {slice_id}: {e}")
             return False
-    
+
     def get_supported_images(self) -> List[Dict[str, Any]]:
         try:
             images = self.api_client.list_images()
             supported = []
-            
+
             for image in images:
                 if image.status == 'active':
                     supported.append({
@@ -521,18 +521,18 @@ manage_etc_hosts: true
                         'min_ram': getattr(image, 'min_ram', 0),
                         'status': image.status
                     })
-            
+
             return supported
-            
+
         except Exception as e:
             logger.error(f"Error al obtener las imágenes soportadas: {e}")
             return []
-    
+
     def get_supported_flavors(self) -> List[Dict[str, Any]]:
         try:
             flavors = self.api_client.list_flavors()
             supported = []
-            
+
             for flavor in flavors:
                 supported.append({
                     'id': flavor.id,
@@ -541,7 +541,7 @@ manage_etc_hosts: true
                     'ram': flavor.ram,
                     'disk': flavor.disk
                 })
-            
+
             flavor_names = [f['name'] for f in supported]
             for name, config in self.config.flavors.items():
                 if name not in flavor_names:
@@ -552,9 +552,193 @@ manage_etc_hosts: true
                         'ram': config['ram'],
                         'disk': config['disk']
                     })
-            
+
             return supported
-            
+
         except Exception as e:
             logger.error(f"Error al obtener los flavors soportados: {e}")
             return []
+
+    # Métodos adicionales agregados según tu solicitud
+    def get_server_resources(self) -> List[Dict[str, Any]]:
+        """Obtiene recursos de todos los servidores OpenStack"""
+        try:
+            hypervisors = self.api_client.nova.hypervisors.list()
+            servers = []
+
+            for hypervisor in hypervisors:
+                # Obtener detalles del hypervisor
+                details = self.api_client.nova.hypervisors.get(hypervisor.id)
+
+                server_info = {
+                    'hostname': hypervisor.hypervisor_hostname,
+                    'infrastructure': 'openstack',
+                    'total_vcpus': hypervisor.vcpus,
+                    'used_vcpus': hypervisor.vcpus_used,
+                    'available_vcpus': hypervisor.vcpus - hypervisor.vcpus_used,
+                    'total_ram': hypervisor.memory_mb,
+                    'used_ram': hypervisor.memory_mb_used,
+                    'available_ram': hypervisor.memory_mb - hypervisor.memory_mb_used,
+                    'total_disk': hypervisor.local_gb,
+                    'used_disk': hypervisor.local_gb_used,
+                    'available_disk': hypervisor.local_gb - hypervisor.local_gb_used,
+                    'running_vms': hypervisor.running_vms,
+                    'state': hypervisor.state,
+                    'status': hypervisor.status
+                }
+                servers.append(server_info)
+
+            return servers
+
+        except Exception as e:
+            logger.error(f"Error al obtener recursos de servidores: {e}")
+            return []
+
+    def list_vms(self) -> List[Dict[str, Any]]:
+        """Lista todas las VMs en OpenStack"""
+        try:
+            servers = self.api_client.list_servers(detailed=True)
+            vms = []
+
+            for server in servers:
+                vm_info = {
+                    'id': server.id,
+                    'name': server.name,
+                    'status': server.status,
+                    'power_state': getattr(server, 'OS-EXT-STS:power_state', 'unknown'),
+                    'flavor': server.flavor.get('original_name', 'unknown'),
+                    'created_at': server.created,
+                    'updated_at': server.updated,
+                    'infrastructure': 'openstack'
+                }
+
+                # Obtener IPs
+                for network_name, addresses in server.addresses.items():
+                    if addresses:
+                        vm_info['ip_address'] = addresses[0]['addr']
+                        vm_info['network'] = network_name
+                        break
+
+                vms.append(vm_info)
+
+            return vms
+
+        except Exception as e:
+            logger.error(f"Error al listar VMs: {e}")
+            return []
+
+    def get_vm_status(self, vm_id: str) -> str:
+        """Obtiene el estado de una VM específica"""
+        try:
+            server = self.api_client.get_server(vm_id)
+            return server.status.lower()
+        except Exception as e:
+            logger.error(f"Error al obtener estado de VM {vm_id}: {e}")
+            return 'error'
+
+    def start_vm(self, vm_id: str) -> bool:
+        """Inicia una VM detenida"""
+        try:
+            server = self.api_client.get_server(vm_id)
+            if server.status == 'SHUTOFF':
+                self.api_client.nova.servers.start(server)
+                logger.info(f"VM {vm_id} iniciada")
+                return True
+            else:
+                logger.warning(f"VM {vm_id} no está en estado SHUTOFF, estado actual: {server.status}")
+                return False
+        except Exception as e:
+            logger.error(f"Error al iniciar VM {vm_id}: {e}")
+            return False
+
+    def stop_vm(self, vm_id: str) -> bool:
+        """Detiene una VM en ejecución"""
+        try:
+            server = self.api_client.get_server(vm_id)
+            if server.status == 'ACTIVE':
+                self.api_client.nova.servers.stop(server)
+                logger.info(f"VM {vm_id} detenida")
+                return True
+            else:
+                logger.warning(f"VM {vm_id} no está en estado ACTIVE, estado actual: {server.status}")
+                return False
+        except Exception as e:
+            logger.error(f"Error al detener VM {vm_id}: {e}")
+            return False
+
+    def get_vm_console_url(self, vm_id: str) -> Optional[str]:
+        """Obtiene la URL de la consola VNC/SPICE de una VM"""
+        try:
+            # Primero intentar con VNC
+            try:
+                console = self.api_client.nova.servers.get_vnc_console(
+                    vm_id,
+                    {'type': 'novnc'}
+                )
+                return console['console']['url']
+            except:
+                # Si falla VNC, intentar con SPICE
+                try:
+                    console = self.api_client.nova.servers.get_spice_console(
+                        vm_id,
+                        {'type': 'spice-html5'}
+                    )
+                    return console['console']['url']
+                except:
+                    # Como último recurso, intentar consola serial
+                    console = self.api_client.nova.servers.get_serial_console(
+                        vm_id,
+                        {'type': 'serial'}
+                    )
+                    return console['console']['url']
+
+        except Exception as e:
+            logger.error(f"Error al obtener URL de consola para VM {vm_id}: {e}")
+            return None
+
+    def destroy_slice(self, slice_id: str) -> bool:
+        """Elimina completamente un slice y todos sus recursos"""
+        try:
+            logger.info(f"Destruyendo slice {slice_id} en OpenStack")
+
+            # Buscar todas las VMs del slice
+            servers = self.api_client.list_servers()
+            slice_servers = [s for s in servers if slice_id in s.name]
+
+            # Eliminar VMs
+            for server in slice_servers:
+                try:
+                    self.delete_vm(server.id)
+                    logger.info(f"VM {server.name} eliminada")
+                except Exception as e:
+                    logger.error(f"Error al eliminar VM {server.name}: {e}")
+
+            # Buscar y eliminar redes del slice
+            networks = self.api_client.list_networks()
+            slice_networks = [n for n in networks if slice_id in n['name']]
+
+            for network in slice_networks:
+                try:
+                    self.delete_network(network['id'])
+                    logger.info(f"Red {network['name']} eliminada")
+                except Exception as e:
+                    logger.error(f"Error al eliminar red {network['name']}: {e}")
+
+            # Buscar y eliminar security groups del slice
+            neutron = self.api_client.neutron
+            sgs = neutron.list_security_groups()['security_groups']
+            slice_sgs = [sg for sg in sgs if slice_id in sg['name'] and sg['name'] != 'default']
+
+            for sg in slice_sgs:
+                try:
+                    neutron.delete_security_group(sg['id'])
+                    logger.info(f"Security group {sg['name']} eliminado")
+                except Exception as e:
+                    logger.error(f"Error al eliminar security group {sg['name']}: {e}")
+
+            logger.info(f"Slice {slice_id} destruido completamente")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error al destruir slice {slice_id}: {e}")
+            return False

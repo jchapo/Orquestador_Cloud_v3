@@ -29,7 +29,7 @@ class LinuxClusterDriver(BaseDriver):
         # Configuración del cluster según tu documento
         self.hypervisors = {
             'server1': {
-                'uri': 'qemu+ssh://ubuntu@pucp-server1/system',
+            'uri': 'qemu+ssh://ubuntu@192.168.201.1/system',
                 'ip': 'pucp-server1',
                 'port': 5811,
                 'max_vcpus': 3,      # Real: 4 cores
@@ -244,6 +244,7 @@ class LinuxClusterDriver(BaseDriver):
                 'errors': [str(e)]
             }
 
+    
     def _create_r5_network(self, network_config: Dict, slice_id: str) -> Dict:
         """Crea una red específica según tipo R5 con nombres cortos"""
         # USAR NOMBRE CORTO - solo los últimos 8 chars del slice_id + tipo
@@ -297,7 +298,7 @@ class LinuxClusterDriver(BaseDriver):
                 f"ip addr add {config.get('gateway', '10.60.1.1')}/24 dev {vlan_interface}",
                 
                 # 7. Habilitar forwarding
-                f"echo 1 > /proc/sys/net/ipv4/conf/{vlan_interface}/forwarding"
+                f"sudo /usr/local/bin/configure-forwarding.sh {vlan_interface}"
             ]
             
             self._execute_ovs_commands(ovs_commands, "trunk network")
@@ -2666,6 +2667,164 @@ class LinuxClusterDriver(BaseDriver):
         except Exception as e:
             logger.warning(f"Error obteniendo token: {e}")
             return None
+
+    def _execute_ssh_command(self, server_name: str, command: str, timeout: int = 60) -> Dict:
+        """Ejecuta comando SSH sin conflictos de puerto"""
+        if server_name not in self.hypervisors:
+            return {
+                'success': False,
+                'error': f'Unknown server: {server_name}',
+                'output': ''
+            }
+        
+        server_config = self.hypervisors[server_name]
+        server_ip = server_config['ip']
+        
+        try:
+            # SSH directo sin port forwarding problemático
+            ssh_command = [
+                'ssh',
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'UserKnownHostsFile=/dev/null',
+                '-o', 'ConnectTimeout=30',
+                '-o', 'ServerAliveInterval=10',
+                '-o', 'ServerAliveCountMax=3',
+                '-o', 'LogLevel=ERROR',  # Reducir ruido en logs
+                f'ubuntu@{server_ip}',
+                command
+            ]
+            
+            logger.debug(f"Executing on {server_name}: {command}")
+            
+            # Ejecutar con timeout
+            result = subprocess.run(
+                ssh_command,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            
+            return {
+                'success': result.returncode == 0,
+                'output': result.stdout.strip(),
+                'error': result.stderr.strip(),
+                'return_code': result.returncode
+            }
+            
+        except subprocess.TimeoutExpired:
+            return {
+                'success': False,
+                'error': f'Command timeout after {timeout}s',
+                'output': ''
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'output': ''
+            }
+    
+    def _create_disk(self, vm_name: str, base_image: str, server_name: str) -> str:
+        """Crea disco de VM con manejo robusto de errores"""
+        try:
+            # Directorio de discos
+            disk_dir = '/home/ubuntu/vm-disks'
+            disk_path = f"{disk_dir}/{vm_name}.qcow2"
+            
+            # 1. Configurar directorio con permisos correctos
+            setup_commands = [
+                f"sudo mkdir -p {disk_dir}",
+                f"sudo chown ubuntu:ubuntu {disk_dir}",
+                f"sudo chmod 755 {disk_dir}"
+            ]
+            
+            for cmd in setup_commands:
+                result = self._execute_ssh_command(server_name, cmd)
+                if not result['success']:
+                    logger.warning(f"Setup command failed: {cmd} - {result['error']}")
+            
+            # 2. Verificar imagen base
+            if base_image in self.available_images:
+                base_path = self.available_images[base_image]['path']
+                
+                # Verificar acceso a imagen base
+                check_result = self._execute_ssh_command(server_name, f"ls -la {base_path}")
+                if not check_result['success']:
+                    raise Exception(f"Base image not accessible: {base_path}")
+                
+                # Crear disco basado en imagen
+                create_cmd = f"qemu-img create -f qcow2 -F qcow2 -b {base_path} {disk_path}"
+            else:
+                logger.warning(f"Unknown base image {base_image}, creating empty disk")
+                create_cmd = f"qemu-img create -f qcow2 {disk_path} 10G"
+            
+            # 3. Crear disco
+            logger.info(f"Creating disk on {server_name}: {create_cmd}")
+            result = self._execute_ssh_command(server_name, create_cmd)
+            
+            if result['success']:
+                # Verificar que se creó
+                verify_result = self._execute_ssh_command(server_name, f"ls -la {disk_path}")
+                if verify_result['success']:
+                    logger.info(f"✓ Disk created successfully: {disk_path}")
+                    return disk_path
+                else:
+                    raise Exception(f"Disk file not found after creation: {disk_path}")
+            else:
+                raise Exception(f"Disk creation failed: {result['error']}")
+                
+        except Exception as e:
+            logger.error(f"Failed to create disk for {vm_name}: {e}")
+            raise
+    
+    def _execute_commands_on_servers(self, commands: List[str], description: str = "commands"):
+        """Ejecuta comandos en todos los servidores del cluster"""
+        results = []
+        errors = []
+        
+        for server_name in self.hypervisors.keys():
+            server_results = []
+            for command in commands:
+                try:
+                    result = self._execute_ssh_command(server_name, command)
+                    server_results.append({
+                        'server': server_name,
+                        'command': command,
+                        'success': result['success'],
+                        'output': result.get('output', ''),
+                        'error': result.get('error', '')
+                    })
+                    
+                    if result['success']:
+                        logger.info(f"✓ {server_name}: {command}")
+                    else:
+                        logger.warning(f"✗ {server_name}: {command} - {result.get('error', 'Unknown error')}")
+                        errors.append(f"{server_name}: {command} failed")
+                        
+                except Exception as e:
+                    error_msg = f"{server_name}: {command} - {str(e)}"
+                    logger.error(f"✗ {error_msg}")
+                    errors.append(error_msg)
+                    server_results.append({
+                        'server': server_name,
+                        'command': command,
+                        'success': False,
+                        'output': '',
+                        'error': str(e)
+                    })
+            
+            results.extend(server_results)
+        
+        if not errors:
+            logger.info(f"Commands executed successfully for {description}")
+        else:
+            logger.warning(f"Some commands failed for {description}: {len(errors)} errors")
+        
+        return {
+            'success': len(errors) == 0,
+            'results': results,
+            'errors': errors
+        }
 
 class NetworkServiceClient:
     """Cliente para interactuar con Network Service"""
