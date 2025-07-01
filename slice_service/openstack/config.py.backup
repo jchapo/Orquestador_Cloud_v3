@@ -4,7 +4,6 @@ import json
 class OpenStackConfig:
     def __init__(self):
         self.config = {
-            # TÚNELES SSH CORREGIDOS
             'auth_url': 'http://localhost:15000/v3',
             'username': 'admin',
             'password': 'admin123',
@@ -12,12 +11,9 @@ class OpenStackConfig:
             'user_domain_name': 'Default',
             'project_domain_name': 'Default',
             'region_name': 'RegionOne',
-            
-            # Endpoints via túneles SSH
             'nova_endpoint': 'http://localhost:18774/v2.1',
             'neutron_endpoint': 'http://localhost:19696',
             'glance_endpoint': 'http://localhost:19292',
-            
             'flavors': {
                 'small': {'vcpus': 1, 'ram': 512, 'disk': 10},
                 'medium': {'vcpus': 2, 'ram': 1024, 'disk': 20}
@@ -34,14 +30,3 @@ class OpenStackConfig:
             'project_domain_name': self.config['project_domain_name'],
             'region_name': self.config['region_name']
         }
-    
-    def get_endpoints(self):
-        return {
-            'nova': self.config['nova_endpoint'],
-            'neutron': self.config['neutron_endpoint'], 
-            'glance': self.config['glance_endpoint']
-        }
-    
-    @property
-    def flavors(self):
-        return self.config['flavors']

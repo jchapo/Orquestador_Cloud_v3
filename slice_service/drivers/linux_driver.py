@@ -29,7 +29,7 @@ class LinuxClusterDriver(BaseDriver):
         # Configuración del cluster según tu documento
         self.hypervisors = {
             'server1': {
-            'uri': 'qemu+ssh://ubuntu@192.168.201.1/system',
+            'uri': 'qemu+ssh://ubuntu@pucp-server1/system',
                 'ip': 'pucp-server1',
                 'port': 5811,
                 'max_vcpus': 3,      # Real: 4 cores
@@ -135,10 +135,30 @@ class LinuxClusterDriver(BaseDriver):
                 'os_type': 'linux',
                 'os_variant': 'ubuntu20.04'
             },
+            'alpine-network': {
+                'path': '/home/ubuntu/vm-images/alpine-network.qcow2',
+                'os_type': 'linux',
+                'os_variant': 'alpinelinux3.18'
+            },
+            'ubuntu-minimal': {
+                'path': '/home/ubuntu/vm-images/ubuntu-minimal-network.qcow2',
+                'os_type': 'linux',
+                'os_variant': 'ubuntu20.04'
+            },
+            'network-tools': {
+                'path': '/home/ubuntu/vm-images/network-tools.qcow2',
+                'os_type': 'linux',
+                'os_variant': 'generic'
+            },
             'ubuntu-22.04': {
                 'path': '/home/ubuntu/vm-images/ubuntu-22.04-server.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'ubuntu22.04'
+            },
+            'cirros-0.5.2': {
+                'path': '/home/ubuntu/vm-images/cirros-0.5.2.qcow2',
+                'os_type': 'linux',
+                'os_variant': 'generic'
             },
             'centos-8': {
                 'path': '/home/ubuntu/vm-images/centos-8-stream.qcow2',
@@ -2831,7 +2851,7 @@ class NetworkServiceClient:
     
     def __init__(self, base_url="http://localhost:5004", token=None):
         self.base_url = base_url
-        self.timeout = 30
+        self.timeout = 120
         self.token = token
         self.headers = {'Content-Type': 'application/json'}
         

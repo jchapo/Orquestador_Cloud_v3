@@ -21,7 +21,7 @@ class VLANManager:
     
     def __init__(self, db_connection):
         self.db = db_connection
-        self.lock = threading.Lock()  # Para operaciones thread-safe
+        self.lock = threading.RLock()  # Para operaciones thread-safe
         
         # Configuración de pools por infraestructura
         self.vlan_pools = {
