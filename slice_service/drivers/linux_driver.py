@@ -141,7 +141,7 @@ class LinuxClusterDriver(BaseDriver):
                 'os_variant': 'alpinelinux3.18'
             },
             'ubuntu-minimal': {
-                'path': '/home/ubuntu/vm-images/ubuntu-minimal-network.qcow2',
+                'path': '/home/ubuntu/vm-images/ubuntu-22.04-minimal.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'ubuntu20.04'
             },
@@ -161,7 +161,7 @@ class LinuxClusterDriver(BaseDriver):
                 'os_variant': 'generic'
             },
             'centos-8': {
-                'path': '/home/ubuntu/vm-images/centos-8-stream.qcow2',
+                'path': '/home/ubuntu/vm-images/centos-8-minimal.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'centos8'
             }

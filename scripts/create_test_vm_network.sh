@@ -35,7 +35,7 @@ SLICE_DATA='{
   "nodes": [
     {
       "name": "vm-test-complete",
-      "image": "ubuntu-network-tools",
+      "image": "network-tools",
       "flavor": "small",
       "internet_access": true
     }
