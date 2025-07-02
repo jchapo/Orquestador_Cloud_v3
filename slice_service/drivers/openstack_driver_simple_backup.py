@@ -43,7 +43,7 @@ class SimpleOpenStackDriver:
         try:
             # Ejecutar comando OpenStack en el headnode
             cmd = [
-                "ssh", "-o", "ConnectTimeout=10", 
+                "ssh", "-o", "ConnectTimeout=10",
                 "ubuntu@10.20.12.187", "-p", "5821",
                 "openstack", "token", "issue", "-f", "value", "-c", "id"
             ]
@@ -80,30 +80,16 @@ class SimpleOpenStackDriver:
 
         try:
             # Crear flavor único
-            flavor_name = f"flavor-{vm_name}"
-            cmd_flavor = [
-                "ssh", "-o", "ConnectTimeout=10",
-                "ubuntu@10.20.12.187", "-p", "5821",
-                "openstack", "flavor", "create",
-                "--vcpus", str(vcpus),
-                "--ram", str(ram), 
-                "--disk", str(disk),
-                flavor_name
-            ]
+            flavor_name = "small"
             
-            print(f"📋 Creando flavor: {flavor_name}")
-            result = subprocess.run(cmd_flavor, capture_output=True, text=True, timeout=15)
-            
-            if result.returncode != 0:
-                print(f"⚠️ Warning crear flavor: {result.stderr}")
-            
+            print(f"📋 Usando flavor: {flavor_name}")
             # Crear VM
             placement = vm_config.get('placement', {})
             zone = placement.get('zone', 'nova')
             
             cmd_vm = [
                 "ssh", "-o", "ConnectTimeout=10",
-                "ubuntu@10.20.12.187", "-p", "5821", 
+                "ubuntu@10.20.12.187", "-p", "5821",
                 "openstack", "server", "create",
                 "--flavor", flavor_name,
                 "--image", "cirros",
@@ -113,7 +99,7 @@ class SimpleOpenStackDriver:
             ]
             
             print(f"🔧 Creando VM: {vm_name}")
-            result = subprocess.run(cmd_vm, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(cmd_vm, capture_output=True, text=True, timeout=160)
             
             if result.returncode == 0:
                 # Obtener info de la VM creada

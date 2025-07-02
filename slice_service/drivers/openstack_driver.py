@@ -1,4 +1,5 @@
-from .openstack_driver_simple import SimpleOpenStackDriver
+from slice_service.drivers.openstack_driver_simple_backup import SimpleOpenStackDriver
+
 
 class OpenStackDriver:
     def __init__(self):
