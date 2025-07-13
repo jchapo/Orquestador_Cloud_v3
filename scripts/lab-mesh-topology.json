@@ -1,0 +1,79 @@
+{
+  "name": "lab-redes-mesh",
+  "description": "Laboratorio de redes - Topología mesh completa",
+  "infrastructure": "linux",
+  "placement_policy": "round-robin",
+  "availability_zone": "zone1-linux",
+  "nodes": [
+    {
+      "name": "router",
+      "image": "ubuntu-minimal",
+      "flavor": "medium",
+      "internet_access": true,
+      "management_ip": "192.168.100.1"
+    },
+    {
+      "name": "server1",
+      "image": "ubuntu-minimal", 
+      "flavor": "small",
+      "internet_access": false
+    },
+    {
+      "name": "server2",
+      "image": "ubuntu-minimal", 
+      "flavor": "small",
+      "internet_access": false
+    },
+    {
+      "name": "client1",
+      "image": "ubuntu-minimal",
+      "flavor": "micro",
+      "internet_access": false
+    },
+    {
+      "name": "client2",
+      "image": "ubuntu-minimal",
+      "flavor": "micro",
+      "internet_access": false
+    }
+  ],
+  "networks": [
+    {
+      "name": "mgmt-net",
+      "cidr": "192.168.100.0/24",
+      "network_type": "management",
+      "internet_access": true,
+      "gateway": "192.168.100.1",
+      "dns_servers": ["8.8.8.8", "8.8.4.4"]
+    },
+    {
+      "name": "lab-net",
+      "cidr": "10.60.1.0/24",
+      "network_type": "data",
+      "internet_access": false,
+      "gateway": "10.60.1.1"
+    }
+  ],
+  "connections": [
+    {
+      "source": "router",
+      "target": "server1",
+      "network": "lab-net"
+    },
+    {
+      "source": "router",
+      "target": "server2", 
+      "network": "lab-net"
+    },
+    {
+      "source": "server1",
+      "target": "client1",
+      "network": "lab-net"
+    },
+    {
+      "source": "server2",
+      "target": "client2",
+      "network": "lab-net"
+    }
+  ]
+}

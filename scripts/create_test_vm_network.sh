@@ -35,7 +35,7 @@ SLICE_DATA='{
   "nodes": [
     {
       "name": "vm-test-complete",
-      "image": "ubuntu-minimal",
+      "image": "ubuntu-22.04-minimal",
       "flavor": "small",
       "internet_access": true
     }

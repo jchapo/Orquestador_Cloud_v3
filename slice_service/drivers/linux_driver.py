@@ -130,7 +130,7 @@ class LinuxClusterDriver(BaseDriver):
         
         # Imágenes disponibles
         self.available_images = {
-            'ubuntu-20.04': {
+            'ubuntu-20.04-server': {
                 'path': '/home/ubuntu/vm-images/ubuntu-20.04-server.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'ubuntu20.04'
@@ -140,7 +140,7 @@ class LinuxClusterDriver(BaseDriver):
                 'os_type': 'linux',
                 'os_variant': 'alpinelinux3.18'
             },
-            'ubuntu-minimal': {
+            'ubuntu-22.04-minimal': {
                 'path': '/home/ubuntu/vm-images/ubuntu-22.04-minimal.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'ubuntu20.04'
@@ -150,8 +150,8 @@ class LinuxClusterDriver(BaseDriver):
                 'os_type': 'linux',
                 'os_variant': 'generic'
             },
-            'ubuntu-22.04': {
-                'path': '/home/ubuntu/vm-images/ubuntu-22.04-server.qcow2',
+            'ubuntu-22.04-minimal': {
+                'path': '/home/ubuntu/vm-images/ubuntu-22.04-minimal.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'ubuntu22.04'
             },
@@ -160,7 +160,7 @@ class LinuxClusterDriver(BaseDriver):
                 'os_type': 'linux',
                 'os_variant': 'generic'
             },
-            'centos-8': {
+            'centos-8-minimal': {
                 'path': '/home/ubuntu/vm-images/centos-8-minimal.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'centos8'
@@ -2504,6 +2504,7 @@ class LinuxClusterDriver(BaseDriver):
         try:
             result = subprocess.run(ssh_cmd, capture_output=True, text=True, check=True)
             logger.info(f"Disk created: {vm_disk_path}")
+            
             return vm_disk_path
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to create disk: {e.stderr}")
