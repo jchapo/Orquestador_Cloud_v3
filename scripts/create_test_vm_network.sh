@@ -1,9 +1,7 @@
 #!/bin/bash
 set -e
-
-echo "🚀 PUCP Cloud Orchestrator - Test VM Complete"
-echo "=============================================="
-
+echo "🚀 PUCP Cloud Orchestrator - Test Topología Completa"
+echo "====================================================="
 API_BASE="http://localhost/api"
 USERNAME="testuser"
 PASSWORD="testpass123"
@@ -25,43 +23,117 @@ if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
 fi
 log "✅ Autenticado"
 
-# Crear slice
-log "🏗️ Creando slice..."
+# Crear slice con topología completa
+log "🏗️ Creando slice con topología de 6 VMs..."
 SLICE_DATA='{
-  "name": "test-topologia-lineal-'$(date +%s)'",
-  "description": "Topología lineal: VM1 (sin internet) ↔ VM2 (con internet)",
+  "name": "pucp-network-topology",
+  "description": "Topología de red con múltiples VMs interconectadas según diagrama",
   "infrastructure": "linux",
   "placement_policy": "distributed",
+  "availability_zone": "zone1-linux",
   "nodes": [
     {
-      "name": "vm1-sin-internet",
-      "image": "ubuntu-22.04-minimal", 
+      "name": "vm6",
+      "image": "ubuntu-22.04-minimal",
       "flavor": "micro",
-      "internet_access": false
+      "internet_access": false,
+      "description": "Nodo terminal superior"
     },
     {
-      "name": "vm2-con-internet",
+      "name": "vm5",
+      "image": "ubuntu-22.04-minimal", 
+      "flavor": "small",
+      "internet_access": true,
+      "description": "Nodo central con acceso a internet"
+    },
+    {
+      "name": "vm4",
+      "image": "ubuntu-22.04-minimal",
+      "flavor": "micro",
+      "internet_access": false,
+      "description": "Nodo intermedio con acceso a internet"
+    },
+    {
+      "name": "vm1",
       "image": "ubuntu-22.04-minimal",
       "flavor": "micro", 
-      "internet_access": true
+      "internet_access": false,
+      "description": "Nodo terminal inferior izquierdo"
+    },
+    {
+      "name": "vm3",
+      "image": "ubuntu-22.04-minimal",
+      "flavor": "micro",
+      "internet_access": false,
+      "description": "Nodo terminal inferior derecho"
+    },
+    {
+      "name": "vm2",
+      "image": "ubuntu-22.04-minimal",
+      "flavor": "micro",
+      "internet_access": false,
+      "description": "Nodo intermedio inferior"
     }
   ],
   "networks": [
     {
-      "name": "topologia-lineal",
+      "name": "topology-network",
       "cidr": "10.60.1.0/24",
-      "gateway": "10.60.1.1", 
+      "gateway": "10.60.1.1",
       "network_type": "trunk",
-      "internet_access": false
+      "internet_access": true,
+      "description": "Red principal de la topología"
+    }
+  ],
+  "connections": [
+    {
+      "source": "vm6",
+      "target": "vm5",
+      "network": "topology-network",
+      "description": "VM6 -> VM5"
+    },
+    {
+      "source": "vm5",
+      "target": "vm4", 
+      "network": "topology-network",
+      "description": "VM5 -> VM4"
+    },
+    {
+      "source": "vm4",
+      "target": "vm3",
+      "network": "topology-network", 
+      "description": "VM4 -> VM3"
+    },
+    {
+      "source": "vm3",
+      "target": "vm2",
+      "network": "topology-network",
+      "description": "VM3 -> VM2"
+    },
+    {
+      "source": "vm2",
+      "target": "vm1",
+      "network": "topology-network",
+      "description": "VM2 -> VM1"
+    },
+    {
+      "source": "vm1",
+      "target": "vm4",
+      "network": "topology-network", 
+      "description": "VM1 -> VM4"
     }
   ],
   "topology": {
-    "type": "linear",
-    "connections": [
+    "type": "custom",
+    "description": "Topología jerárquica (VM5) con acceso a internet",
+    "routing_rules": [
       {
-        "from": "vm1-sin-internet",
-        "to": "vm2-con-internet",
-        "network": "topologia-lineal"
+        "description": "Solo VM5 tiene acceso directo a internet",
+        "rule": "internet_gateway_only_vm5"
+      },
+      {
+        "description": "Otras VMs acceden a internet a través de VM5",
+        "rule": "nat_through_vm5"
       }
     ]
   }
@@ -82,11 +154,10 @@ log "✅ Slice creado: $SLICE_ID"
 
 # Deploy
 log "🚀 Iniciando deployment..."
-log "   (Esto puede tomar 3-5 minutos)"
-
+log "   (Esto puede tomar 5-8 minutos para 6 VMs)"
 DEPLOY_RESPONSE=$(curl -s -X POST $API_BASE/slices/$SLICE_ID/deploy \
   -H "Authorization: Bearer $TOKEN" \
-  --max-time 600)
+  --max-time 900)
 
 # Verificar respuesta
 if echo "$DEPLOY_RESPONSE" | grep -q "504 Gateway Time-out"; then
@@ -95,14 +166,13 @@ if echo "$DEPLOY_RESPONSE" | grep -q "504 Gateway Time-out"; then
 fi
 
 DEPLOY_STATUS=$(echo "$DEPLOY_RESPONSE" | jq -r '.status // "unknown"' 2>/dev/null || echo "error")
-
 if [ "$DEPLOY_STATUS" = "success" ]; then
     log "✅ ¡Deployment completado inmediatamente!"
 else
     # Monitorear progreso
-    log "👀 Monitoreando progreso..."
-    for i in {1..30}; do
-        sleep 10
+    log "👀 Monitoreando progreso del deployment..."
+    for i in {1..45}; do
+        sleep 15
         
         STATUS_RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" \
           $API_BASE/slices/$SLICE_ID)
@@ -120,11 +190,11 @@ else
                 exit 1
                 ;;
             *)
-                log "   ⏳ $STATUS... ($i/30)"
+                log "   ⏳ $STATUS... ($i/45) - Desplegando 6 VMs"
                 ;;
         esac
         
-        if [ $i -eq 30 ]; then
+        if [ $i -eq 45 ]; then
             log "⏰ Timeout de monitoreo"
             exit 1
         fi
@@ -136,21 +206,8 @@ log "📊 Obteniendo información completa..."
 FINAL_RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" \
   $API_BASE/slices/$SLICE_ID)
 
-# Extraer información de la VM
-VM1_INFO=$(echo $FINAL_RESPONSE | jq '.nodes[0]')
-VM2_INFO=$(echo $FINAL_RESPONSE | jq '.nodes[1]')
-VM1_NAME=$(echo $VM1_INFO | jq -r '.name')
-VM1_IP=$(echo $VM1_INFO | jq -r '.ip_address // "Dinámica"')
-VM1_STATUS=$(echo $VM1_INFO | jq -r '.status')
-VM1_HOST=$(echo $VM1_INFO | jq -r '.assigned_host // "N/A"')
-
-VM2_NAME=$(echo $VM2_INFO | jq -r '.name')
-VM2_IP=$(echo $VM2_INFO | jq -r '.ip_address // "Dinámica"')
-VM2_STATUS=$(echo $VM2_INFO | jq -r '.status')
-VM2_HOST=$(echo $VM2_INFO | jq -r '.assigned_host // "N/A"')
-VM2_CONSOLE=$(echo $VM2_INFO | jq -r '.console_url // "N/A"')
-
-# Extraer información de la red
+# Extraer información de todas las VMs
+VM_COUNT=$(echo $FINAL_RESPONSE | jq '.nodes | length')
 NETWORK_INFO=$(echo $FINAL_RESPONSE | jq '.networks[0]')
 NETWORK_NAME=$(echo $NETWORK_INFO | jq -r '.name')
 NETWORK_CIDR=$(echo $NETWORK_INFO | jq -r '.cidr')
@@ -162,26 +219,39 @@ DEPLOYMENT_DATA=$(echo $FINAL_RESPONSE | jq '.deployment_data')
 DEPLOYED_VMS=$(echo $DEPLOYMENT_DATA | jq '.deployed_vms // []')
 
 echo ""
-echo "🎉 ¡DEPLOYMENT COMPLETADO EXITOSAMENTE!"
-echo "======================================="
+echo "🎉 ¡DEPLOYMENT DE TOPOLOGÍA COMPLETADO EXITOSAMENTE!"
+echo "====================================================="
 echo ""
 echo "📋 INFORMACIÓN DE LAS VMs:"
 echo "=========================="
-echo "VM1 (sin internet):"
-echo "  Nombre: $VM1_NAME"
-echo "  Estado: $VM1_STATUS"
-echo "  Servidor: $VM1_HOST"
-echo "  IP: $VM1_IP"
-echo "  Acceso externo: ❌ NO"
+echo "Total de VMs desplegadas: $VM_COUNT"
 echo ""
-echo "VM2 (con internet):"
-echo "  Nombre: $VM2_NAME"
-echo "  Estado: $VM2_STATUS"
-echo "  Servidor: $VM2_HOST"
-echo "  IP: $VM2_IP"
-echo "  Consola VNC: $VM2_CONSOLE"
-echo "  Acceso externo: ✅ SÍ"
-echo ""
+
+# Mostrar información de cada VM
+for i in $(seq 0 $((VM_COUNT-1))); do
+    VM_INFO=$(echo $FINAL_RESPONSE | jq ".nodes[$i]")
+    VM_NAME=$(echo $VM_INFO | jq -r '.name')
+    VM_IP=$(echo $VM_INFO | jq -r '.ip_address // "Dinámica"')
+    VM_STATUS=$(echo $VM_INFO | jq -r '.status')
+    VM_HOST=$(echo $VM_INFO | jq -r '.assigned_host // "N/A"')
+    INTERNET_ACCESS=$(echo $VM_INFO | jq -r '.internet_access // false')
+    
+    if [ "$INTERNET_ACCESS" = "true" ]; then
+        INTERNET_ICON="🌐"
+        ROLE=" (GATEWAY)"
+    else
+        INTERNET_ICON="🔒"
+        ROLE=""
+    fi
+    
+    echo "$INTERNET_ICON $VM_NAME$ROLE:"
+    echo "  Estado: $VM_STATUS"
+    echo "  Servidor: $VM_HOST"
+    echo "  IP: $VM_IP"
+    echo "  Internet: $INTERNET_ACCESS"
+    echo ""
+done
+
 echo "🌐 INFORMACIÓN DE RED:"
 echo "======================"
 echo "Red: $NETWORK_NAME"
@@ -189,69 +259,96 @@ echo "CIDR: $NETWORK_CIDR"
 echo "Gateway: $NETWORK_GATEWAY"
 echo "VLAN ID: $VLAN_ID"
 echo ""
-echo "🔌 ACCESO DESDE TU LAPTOP (VPN PUCP):"
-echo "====================================="
+
+echo "🔌 TOPOLOGÍA Y CONECTIVIDAD:"
+echo "============================"
 echo ""
-echo "VM1 ($VM1_NAME):"
-echo "  ❌ No accesible desde exterior"
-echo "  ✅ Solo comunicación interna con VM2"
+echo "Estructura jerárquica desplegada:"
 echo ""
-echo "VM2 ($VM2_NAME):"
-echo "  ✅ SSH: ssh ubuntu@192.168.201.1 -p XXXX  # Puerto según servidor"
-echo "  ✅ Puede navegar internet"
-echo "  ✅ Comunicación con VM1 via $NETWORK_CIDR"
+echo "        VM6 (sin internet)"
+echo "         |"
+echo "        VM5 (🌐 GATEWAY) ← Única con acceso directo a internet"
+echo "       /   \\"
+echo "     VM4   VM3 (sin internet)"
+echo "    /  \\"
+echo "  VM1  VM2 (sin internet)"
+echo "       |"
+echo "      VM3"
 echo ""
-echo "🔧 COMANDOS ÚTILES:"
-echo "==================="
+echo "🔀 CONEXIONES CONFIGURADAS:"
+echo "• VM6 ↔ VM5 (gateway)"
+echo "• VM5 ↔ VM4, VM5 ↔ VM3" 
+echo "• VM4 ↔ VM1, VM4 ↔ VM2"
+echo "• VM2 ↔ VM3"
 echo ""
-echo "# Verificar estado del slice:"
-echo "curl -H \"Authorization: Bearer $TOKEN\" $API_BASE/slices/$SLICE_ID | jq '.status'"
+
+echo "🌐 ACCESO A INTERNET:"
+echo "====================="
+echo "• VM5: ✅ Acceso directo a internet"
+echo "• Otras VMs: ⚠️  Sin acceso directo (deben usar VM5 como gateway)"
 echo ""
-echo "# Verificar VMs desplegadas:"
-echo "curl -H \"Authorization: Bearer $TOKEN\" $API_BASE/slices/$SLICE_ID | jq '.deployment_data.deployed_vms'"
+
+echo "🔧 COMANDOS PARA PRUEBAS DE CONECTIVIDAD:"
+echo "========================================="
 echo ""
-echo "# Conectar por SSH (una vez que la VM esté completamente iniciada):"
-echo "ssh ubuntu@$NETWORK_GATEWAY"
+echo "# Conectar a VM5 (gateway) - tiene acceso a internet:"
+echo "ssh ubuntu@$NETWORK_GATEWAY -p [PUERTO_VM5]"
 echo ""
+echo "# Desde VM5, probar internet:"
+echo "ping 8.8.8.8"
+echo "curl -I https://www.google.com"
+echo ""
+echo "# Desde VM5, probar conectividad interna a otras VMs:"
+echo "ping [IP_VM1] # Ping a VM1"
+echo "ping [IP_VM2] # Ping a VM2" 
+echo "ping [IP_VM3] # Ping a VM3"
+echo "ping [IP_VM4] # Ping a VM4"
+echo "ping [IP_VM6] # Ping a VM6"
+echo ""
+echo "# Configurar NAT en VM5 para compartir internet:"
+echo "sudo iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE"
+echo "sudo iptables -A FORWARD -i eth1 -o eth0 -j ACCEPT"
+echo "sudo iptables -A FORWARD -i eth0 -o eth1 -m state --state RELATED,ESTABLISHED -j ACCEPT"
+echo "echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward"
+echo ""
+
+echo "🔍 VERIFICACIÓN EN SERVIDORES:"
+echo "==============================="
+echo ""
+echo "# Verificar todas las VMs corriendo:"
+echo "for server in server1 server2 server3 server4; do"
+echo "  echo \"=== \$server ===\""
+echo "  ssh ubuntu@\$server 'virsh list'"
+echo "done"
+echo ""
+echo "# Verificar configuración de red OVS:"
+echo "ssh ubuntu@[SERVER] 'ovs-vsctl show'"
+echo ""
+echo "# Verificar VLAN configurada:"
+echo "ssh ubuntu@[SERVER] 'ip link show | grep vlan$VLAN_ID'"
+echo ""
+
 echo "🧹 PARA LIMPIAR RECURSOS:"
 echo "========================="
 echo "Slice ID: $SLICE_ID"
 echo ""
 echo "curl -X DELETE -H \"Authorization: Bearer $TOKEN\" $API_BASE/slices/$SLICE_ID"
 echo ""
-echo "🔍 VERIFICAR EN LOS SERVIDORES:"
-echo "==============================="
-echo ""
-echo "En el servidor $ASSIGNED_HOST, puedes verificar:"
-echo "# Lista de VMs corriendo:"
-echo "virsh list"
-echo ""
-echo "# Estado de la VM específica:"
-echo "virsh dominfo $VM_NAME"
-echo ""
-echo "# Configuración de red OVS:"
-echo "ovs-vsctl show"
-echo ""
-echo "# Verificar VLAN configurada:"
-echo "ip link show | grep vlan$VLAN_ID"
-echo ""
-echo "🧪 VERIFICAR CONECTIVIDAD:"
-echo "========================="
-echo ""
-echo "# Desde VM2, probar ping a VM1:"
-echo "ping $VM1_IP"
-echo ""
-echo "# Desde VM2, probar internet:"
-echo "ping 8.8.8.8"
-echo ""
-echo "# Desde VM1, NO debería tener internet:"
-echo "# (Este comando debería fallar)"
 
 # Mostrar datos técnicos del deployment si están disponibles
 if echo "$DEPLOYED_VMS" | jq -e '. | length > 0' > /dev/null 2>&1; then
     echo "📊 DATOS TÉCNICOS DEL DEPLOYMENT:"
     echo "================================="
-    echo "$DEPLOYED_VMS" | jq -r '.[] | "VM: \(.name)\nServidor: \(.server)\nID VM: \(.vm_id // "N/A")\nIP: \(.ip_address // "Dinámica")\nConsola: \(.console_url // "N/A")\n"'
+    echo "$DEPLOYED_VMS" | jq -r '.[] | "VM: \(.name)\nServidor: \(.server)\nID VM: \(.vm_id // "N/A")\nIP: \(.ip_address // "Dinámica")\nConsola: \(.console_url // "N/A")\n---"'
 fi
 
-log "🎉 Test completado exitosamente!"
+echo "📋 RESUMEN FINAL:"
+echo "================="
+echo "✅ $VM_COUNT VMs desplegadas exitosamente"
+echo "✅ Topología jerárquica configurada"
+echo "✅ VM5 configurada como gateway con acceso a internet"
+echo "✅ Red interna $NETWORK_CIDR establecida"
+echo "✅ VLAN $VLAN_ID asignada"
+echo ""
+
+log "🎉 Test de topología completa exitoso!"

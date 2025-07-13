@@ -291,85 +291,9 @@ class LinuxClusterDriver(BaseDriver):
         else:
             raise ValueError(f"Network type {network_type} not implemented")
 
-    def _configure_openflow_rules(self, vlan_id: int, vlan_interface: str, server_name: str = None):
-        """
-        Configura reglas OpenFlow para permitir comunicación en la VLAN
-        """
-        try:
-            logger.info(f"Configuring OpenFlow rules for VLAN {vlan_id} interface {vlan_interface}")
-            
-            # Comandos OpenFlow para configurar la VLAN
-            openflow_commands = [
-                # Regla básica para permitir tráfico normal en la VLAN
-                f"ovs-ofctl add-flow ovs1 'table=0,priority=100,dl_vlan={vlan_id},actions=normal'",
-                
-                # Regla específica para ARP en la VLAN
-                f"ovs-ofctl add-flow ovs1 'table=0,priority=200,dl_vlan={vlan_id},dl_type=0x0806,actions=normal'",
-                
-                # Regla para IPv4 en la VLAN
-                f"ovs-ofctl add-flow ovs1 'table=0,priority=150,dl_vlan={vlan_id},dl_type=0x0800,actions=normal'",
-                
-                # Regla para permitir tráfico desde/hacia la interfaz VLAN
-                f"ovs-ofctl add-flow ovs1 'table=0,priority=100,in_port=LOCAL,dl_vlan={vlan_id},actions=normal'",
-                
-                # Regla de fallback para asegurar conectividad básica si no hay otras reglas
-                f"ovs-ofctl add-flow ovs1 'table=0,priority=10,actions=normal'"
-            ]
-            
-            # Si se especifica servidor, ejecutar en ese servidor, sino en todos
-            servers_to_configure = [server_name] if server_name else self.hypervisors.keys()
-            
-            for srv in servers_to_configure:
-                server_ip = self.hypervisors[srv]['ip']
-                
-                for cmd in openflow_commands:
-                    ssh_cmd = ['ssh', f'ubuntu@{server_ip}', 'sudo', cmd]
-                    try:
-                        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
-                        if result.returncode == 0:
-                            logger.debug(f"✓ OpenFlow rule added on {srv}: {cmd}")
-                        else:
-                            logger.warning(f"⚠ OpenFlow rule failed on {srv}: {result.stderr}")
-                    except subprocess.TimeoutExpired:
-                        logger.warning(f"⚠ OpenFlow command timed out on {srv}")
-                    except Exception as e:
-                        logger.warning(f"⚠ OpenFlow command error on {srv}: {e}")
-            
-            # Verificar que los flujos se agregaron correctamente
-            self._verify_openflow_rules(vlan_id, servers_to_configure[0])
-            
-            logger.info(f"✓ OpenFlow rules configured for VLAN {vlan_id}")
-            
-        except Exception as e:
-            logger.error(f"Error configuring OpenFlow rules: {e}")
-            # No lanzar excepción para no romper el deployment
-            logger.warning("Continuing deployment without OpenFlow optimization")
-
-    def _verify_openflow_rules(self, vlan_id: int, server_name: str):
-        """Verifica que las reglas OpenFlow se agregaron correctamente"""
-        try:
-            server_ip = self.hypervisors[server_name]['ip']
-            verify_cmd = ['ssh', f'ubuntu@{server_ip}', 'sudo', 'ovs-ofctl', 'dump-flows', 'ovs1']
-            result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=30)
-            
-            if result.returncode == 0:
-                flows = result.stdout
-                if f'dl_vlan={vlan_id}' in flows:
-                    logger.info(f"✓ OpenFlow rules verified for VLAN {vlan_id}")
-                    return True
-                else:
-                    logger.warning(f"⚠ No OpenFlow rules found for VLAN {vlan_id}")
-            else:
-                logger.warning(f"⚠ Could not verify OpenFlow rules: {result.stderr}")
-                
-        except Exception as e:
-            logger.warning(f"⚠ Error verifying OpenFlow rules: {e}")
-        
-        return False
-
-
+    
     def _configure_ovs_trunk_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
-        """Configura VLAN trunk con nombres cortos + OpenFlow - MEJORADO"""
+        """Configura VLAN trunk con nombres cortos - CORREGIDO"""
         try:
             # USAR NOMBRE CORTO para la interfaz
             vlan_interface = f"vlan{vlan_id}"  # ej: vlan103 (7 chars)
@@ -398,10 +322,6 @@ class LinuxClusterDriver(BaseDriver):
             ]
             
             self._execute_ovs_commands(ovs_commands, "trunk network")
-            
-            # ✨ NUEVO: Configurar reglas OpenFlow para esta VLAN
-            self._configure_openflow_rules(vlan_id, vlan_interface)
-            
             logger.info(f"✓ OVS trunk network {vlan_interface} configured with VLAN {vlan_id}")
             
         except Exception as e:
@@ -409,20 +329,32 @@ class LinuxClusterDriver(BaseDriver):
             raise
 
     def _configure_ovs_data_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
-        """Configura VLAN de datos con integración Network Service + OpenFlow"""
+        """Configura VLAN de datos con integración Network Service"""
         try:
             ovs_commands = [
-                # ... código existente igual ...
+                # Crear puerto data VLAN
+                f"ovs-vsctl add-port {bridge} {name} tag={vlan_id}",
+                
+                # Configurar como puerto interno
+                f"ovs-vsctl set interface {name} type=internal",
+                
+                # Configurar MTU estándar
+                f"ip link set {name} mtu 1500",
+                
+                # Activar interfaz
+                f"ip link set {name} up",
+                
+                # Configurar IP del gateway si se especifica
+                f"ip addr add {config.get('gateway', '192.168.100.1')}/24 dev {name}" if config.get('gateway') else "",
+                
+                # NO habilitar forwarding (red aislada)
+                f"echo 0 > /proc/sys/net/ipv4/conf/{name}/forwarding"
             ]
             
             # Filtrar comandos vacíos
             ovs_commands = [cmd for cmd in ovs_commands if cmd]
             
             self._execute_ovs_commands(ovs_commands, "data network")
-            
-            # ✨ NUEVO: Configurar reglas OpenFlow para data network
-            self._configure_openflow_rules(vlan_id, name)
-            
             logger.info(f"✓ OVS data network {name} configured with VLAN {vlan_id}")
             
         except Exception as e:
@@ -430,19 +362,40 @@ class LinuxClusterDriver(BaseDriver):
             raise
 
     def _configure_ovs_provider_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
-        """Configura red provider con capacidades completas + OpenFlow"""
+        """Configura red provider con capacidades completas"""
         try:
             ovs_commands = [
-                # ... código existente igual ...
+                # Crear puerto provider con configuración avanzada
+                f"ovs-vsctl add-port {bridge} {name} tag={vlan_id}",
+                
+                # Configurar como puerto provider
+                f"ovs-vsctl set interface {name} type=internal",
+                f"ovs-vsctl set port {name} vlan_mode=access",
+                
+                # Configurar MTU jumbo frames si se solicita
+                f"ip link set {name} mtu {config.get('mtu', 1500)}",
+                
+                # Activar interfaz
+                f"ip link set {name} up",
+                
+                # Configurar IP del gateway provider
+                f"ip addr add {config.get('gateway', '10.60.1.1')}/24 dev {name}",
+                
+                # Habilitar forwarding completo
+                f"echo 1 > /proc/sys/net/ipv4/conf/{name}/forwarding",
+                f"echo 1 > /proc/sys/net/ipv4/conf/{name}/proxy_arp",
+                
+                # Configurar como provider bridge
+                f"ovs-vsctl set bridge {bridge} other-config:forward-bpdu=true",
+                
+                # Configurar spanning tree si es necesario
+                f"ovs-vsctl set bridge {bridge} stp_enable=true" if config.get('stp_enable') else ""
             ]
             
             # Filtrar comandos vacíos
             ovs_commands = [cmd for cmd in ovs_commands if cmd]
             
             self._execute_ovs_commands(ovs_commands, "provider network")
-            
-            # ✨ NUEVO: Configurar reglas OpenFlow para provider network
-            self._configure_openflow_rules(vlan_id, name)
             
             # Configuración adicional para provider networks
             self._configure_provider_nat_rules(vlan_id, config['cidr'])
@@ -2551,191 +2504,12 @@ class LinuxClusterDriver(BaseDriver):
         try:
             result = subprocess.run(ssh_cmd, capture_output=True, text=True, check=True)
             logger.info(f"Disk created: {vm_disk_path}")
-            self._configure_vm_credentials(vm_disk_path, vm_name, server_name)
+            
             return vm_disk_path
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to create disk: {e.stderr}")
             raise Exception(f"Disk creation failed: {e.stderr}")
-
-    def _configure_vm_credentials(self, vm_disk_path: str, vm_name: str, server_name: str):
-        """
-        Configura credenciales por defecto en la VM usando virt-customize
-        """
-        try:
-            logger.info(f"Configuring default credentials for VM {vm_name}")
-            server_ip = self.hypervisors[server_name]['ip']
             
-            # Verificar si virt-customize está disponible
-            check_cmd = ['ssh', f'ubuntu@{server_ip}', 'which', 'virt-customize']
-            result = subprocess.run(check_cmd, capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                logger.info("Installing libguestfs-tools for VM customization...")
-                # Comando corregido para SSH
-                install_cmd = [
-                    'ssh', f'ubuntu@{server_ip}', 
-                    'sudo', 'bash', '-c', 
-                    'apt update && apt install -y libguestfs-tools'
-                ]
-                install_result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=300)
-                if install_result.returncode != 0:
-                    logger.error(f"Failed to install libguestfs-tools: {install_result.stderr}")
-                    return False
-            
-            # Configurar credenciales usando virt-customize
-            credential_cmd = [
-                'ssh', f'ubuntu@{server_ip}',
-                'sudo', 'virt-customize', '-a', vm_disk_path,
-                '--root-password', 'password:ubuntu',
-                '--run-command', 'useradd -m -s /bin/bash ubuntu 2>/dev/null || true',
-                '--password', 'ubuntu:password:ubuntu', 
-                '--run-command', 'usermod -aG sudo ubuntu',
-                '--run-command', 'sed -i "s/#*PasswordAuthentication.*/PasswordAuthentication yes/g" /etc/ssh/sshd_config',
-                '--run-command', 'systemctl enable ssh',
-                # Crear directorio sudoers.d si no existe
-                '--run-command', 'mkdir -p /etc/sudoers.d',
-                '--run-command', 'chmod 755 /etc/sudoers.d',
-                # Crear archivo sudoers con permisos correctos
-                '--run-command', 'echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu',
-                '--run-command', 'chmod 440 /etc/sudoers.d/ubuntu',
-                '--run-command', 'chown root:root /etc/sudoers.d/ubuntu',
-                # Verificar sintaxis de sudoers
-                '--run-command', 'visudo -c || echo "Warning: sudoers syntax check failed"'
-            ]
-            
-            result = subprocess.run(credential_cmd, capture_output=True, text=True, timeout=120)
-            
-            if result.returncode == 0:
-                logger.info(f"✓ Default credentials configured for VM {vm_name}")
-                logger.info("  - Username: ubuntu / Password: ubuntu")
-                logger.info("  - Username: root / Password: ubuntu")
-                return True
-            else:
-                logger.warning(f"⚠️ Failed to configure credentials: {result.stderr}")
-                
-                # Fallback: método alternativo más robusto
-                logger.info("Trying fallback credential configuration...")
-                return self._configure_vm_credentials_fallback(vm_disk_path, vm_name, server_name)
-                
-        except subprocess.TimeoutExpired:
-            logger.warning("⚠️ Credential configuration timed out")
-            return self._configure_vm_credentials_fallback(vm_disk_path, vm_name, server_name)
-        except Exception as e:
-            logger.warning(f"⚠️ Could not configure VM credentials: {e}")
-            return self._configure_vm_credentials_fallback(vm_disk_path, vm_name, server_name)
-
-    def _configure_vm_credentials_fallback(self, vm_disk_path: str, vm_name: str, server_name: str):
-        """
-        Método de fallback para configurar credenciales usando métodos alternativos
-        """
-        try:
-            logger.info("Attempting fallback credential configuration...")
-            server_ip = self.hypervisors[server_name]['ip']
-            
-            # Método 1: Solo configurar contraseñas básicas
-            simple_cmd = [
-                'ssh', f'ubuntu@{server_ip}',
-                'sudo', 'virt-customize', '-a', vm_disk_path,
-                '--root-password', 'password:ubuntu',
-                '--run-command', 'useradd -m -s /bin/bash ubuntu 2>/dev/null || true',
-                '--password', 'ubuntu:password:ubuntu',
-                '--run-command', 'usermod -aG sudo ubuntu',
-                '--run-command', 'sed -i "s/#*PasswordAuthentication.*/PasswordAuthentication yes/g" /etc/ssh/sshd_config'
-            ]
-            
-            result = subprocess.run(simple_cmd, capture_output=True, text=True, timeout=60)
-            if result.returncode == 0:
-                logger.info("✓ Fallback credential configuration successful")
-                logger.info("  - Username: ubuntu / Password: ubuntu (with sudo group)")
-                logger.info("  - Username: root / Password: ubuntu")
-                return True
-            
-            # Método 2: Usar guestfish si virt-customize falla completamente
-            logger.info("Trying guestfish as final fallback...")
-            return self._configure_vm_credentials_guestfish(vm_disk_path, vm_name, server_name)
-            
-        except Exception as e:
-            logger.error(f"✗ Fallback credential configuration failed: {e}")
-            logger.info("VM will be created without pre-configured credentials")
-            return False
-
-    def _configure_vm_credentials_guestfish(self, vm_disk_path: str, vm_name: str, server_name: str):
-        """
-        Configurar credenciales usando guestfish como último recurso
-        """
-        try:
-            logger.info("Using guestfish for credential configuration...")
-            server_ip = self.hypervisors[server_name]['ip']
-            
-            # Script guestfish
-            guestfish_script = '''
-            run
-            list-filesystems
-            mount /dev/sda1 /
-            mkdir-p /etc/sudoers.d
-            chmod 755 /etc/sudoers.d
-            write /etc/sudoers.d/ubuntu "ubuntu ALL=(ALL) NOPASSWD:ALL"
-            chmod 440 /etc/sudoers.d/ubuntu
-            chown 0 0 /etc/sudoers.d/ubuntu
-            write /etc/shadow "ubuntu:$6$salt$encrypted:19000:0:99999:7:::"
-            write /etc/passwd "ubuntu:x:1000:1000:Ubuntu User:/home/ubuntu:/bin/bash"
-            mkdir-p /home/ubuntu
-            chown 1000 1000 /home/ubuntu
-            '''
-            
-            # Ejecutar guestfish
-            guestfish_cmd = [
-                'ssh', f'ubuntu@{server_ip}',
-                'sudo', 'guestfish', '-a', vm_disk_path, '-i'
-            ]
-            
-            process = subprocess.Popen(guestfish_cmd, 
-                                    stdin=subprocess.PIPE, 
-                                    stdout=subprocess.PIPE, 
-                                    stderr=subprocess.PIPE, 
-                                    text=True)
-            stdout, stderr = process.communicate(input=guestfish_script, timeout=60)
-            
-            if process.returncode == 0:
-                logger.info("✓ Guestfish credential configuration successful")
-                return True
-            else:
-                logger.error(f"✗ Guestfish configuration failed: {stderr}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"✗ Guestfish credential configuration failed: {e}")
-            return False
-
-    def _verify_vm_credentials(self, vm_name: str, server_name: str):
-        """
-        Verificar que las credenciales se configuraron correctamente
-        """
-        try:
-            logger.info(f"Verifying credentials for VM {vm_name}")
-            server_ip = self.hypervisors[server_name]['ip']
-            
-            # Verificar usando guestfish
-            verify_cmd = [
-                'ssh', f'ubuntu@{server_ip}',
-                'sudo', 'guestfish', '-a', f'/home/ubuntu/vm-disks/{vm_name}.qcow2', '-i',
-                'cat', '/etc/passwd'
-            ]
-            
-            result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=30)
-            
-            if result.returncode == 0 and 'ubuntu' in result.stdout:
-                logger.info("✓ VM credentials verified successfully")
-                return True
-            else:
-                logger.warning("⚠️ Could not verify VM credentials")
-                return False
-                
-        except Exception as e:
-            logger.warning(f"⚠️ Credential verification failed: {e}")
-            return False
-
-
     def _generate_vm_xml(self, vm_config: Dict, disk_path: str, 
                     server_name: str, slice_id: str = None, 
                     networks: List[Dict] = None) -> str:
