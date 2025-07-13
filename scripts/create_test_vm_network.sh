@@ -28,27 +28,43 @@ log "✅ Autenticado"
 # Crear slice
 log "🏗️ Creando slice..."
 SLICE_DATA='{
-  "name": "test-vm-complete-'$(date +%s)'",
-  "description": "VM de prueba con información completa de acceso",
+  "name": "test-topologia-lineal-'$(date +%s)'",
+  "description": "Topología lineal: VM1 (sin internet) ↔ VM2 (con internet)",
   "infrastructure": "linux",
-  "placement_policy": "balanced",
+  "placement_policy": "distributed",
   "nodes": [
     {
-      "name": "vm-test-complete",
-      "image": "ubuntu-22.04-minimal",
+      "name": "vm1-sin-internet",
+      "image": "ubuntu-22.04-minimal", 
       "flavor": "micro",
+      "internet_access": false
+    },
+    {
+      "name": "vm2-con-internet",
+      "image": "ubuntu-22.04-minimal",
+      "flavor": "micro", 
       "internet_access": true
     }
   ],
   "networks": [
     {
-      "name": "test-net-complete",
+      "name": "topologia-lineal",
       "cidr": "10.60.1.0/24",
-      "gateway": "10.60.1.1",
+      "gateway": "10.60.1.1", 
       "network_type": "trunk",
-      "internet_access": true
+      "internet_access": false
     }
-  ]
+  ],
+  "topology": {
+    "type": "linear",
+    "connections": [
+      {
+        "from": "vm1-sin-internet",
+        "to": "vm2-con-internet",
+        "network": "topologia-lineal"
+      }
+    ]
+  }
 }'
 
 SLICE_RESPONSE=$(curl -s -X POST $API_BASE/slices \
@@ -121,12 +137,18 @@ FINAL_RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" \
   $API_BASE/slices/$SLICE_ID)
 
 # Extraer información de la VM
-VM_INFO=$(echo $FINAL_RESPONSE | jq '.nodes[0]')
-VM_NAME=$(echo $VM_INFO | jq -r '.name')
-VM_IP=$(echo $VM_INFO | jq -r '.ip_address // "Asignada dinámicamente"')
-VM_STATUS=$(echo $VM_INFO | jq -r '.status')
-CONSOLE_URL=$(echo $VM_INFO | jq -r '.console_url // "N/A"')
-ASSIGNED_HOST=$(echo $VM_INFO | jq -r '.assigned_host // "N/A"')
+VM1_INFO=$(echo $FINAL_RESPONSE | jq '.nodes[0]')
+VM2_INFO=$(echo $FINAL_RESPONSE | jq '.nodes[1]')
+VM1_NAME=$(echo $VM1_INFO | jq -r '.name')
+VM1_IP=$(echo $VM1_INFO | jq -r '.ip_address // "Dinámica"')
+VM1_STATUS=$(echo $VM1_INFO | jq -r '.status')
+VM1_HOST=$(echo $VM1_INFO | jq -r '.assigned_host // "N/A"')
+
+VM2_NAME=$(echo $VM2_INFO | jq -r '.name')
+VM2_IP=$(echo $VM2_INFO | jq -r '.ip_address // "Dinámica"')
+VM2_STATUS=$(echo $VM2_INFO | jq -r '.status')
+VM2_HOST=$(echo $VM2_INFO | jq -r '.assigned_host // "N/A"')
+VM2_CONSOLE=$(echo $VM2_INFO | jq -r '.console_url // "N/A"')
 
 # Extraer información de la red
 NETWORK_INFO=$(echo $FINAL_RESPONSE | jq '.networks[0]')
@@ -143,13 +165,22 @@ echo ""
 echo "🎉 ¡DEPLOYMENT COMPLETADO EXITOSAMENTE!"
 echo "======================================="
 echo ""
-echo "📋 INFORMACIÓN DE LA VM:"
-echo "========================"
-echo "Nombre: $VM_NAME"
-echo "Estado: $VM_STATUS"
-echo "Servidor asignado: $ASSIGNED_HOST"
-echo "IP interna: $VM_IP"
-echo "Consola VNC: $CONSOLE_URL"
+echo "📋 INFORMACIÓN DE LAS VMs:"
+echo "=========================="
+echo "VM1 (sin internet):"
+echo "  Nombre: $VM1_NAME"
+echo "  Estado: $VM1_STATUS"
+echo "  Servidor: $VM1_HOST"
+echo "  IP: $VM1_IP"
+echo "  Acceso externo: ❌ NO"
+echo ""
+echo "VM2 (con internet):"
+echo "  Nombre: $VM2_NAME"
+echo "  Estado: $VM2_STATUS"
+echo "  Servidor: $VM2_HOST"
+echo "  IP: $VM2_IP"
+echo "  Consola VNC: $VM2_CONSOLE"
+echo "  Acceso externo: ✅ SÍ"
 echo ""
 echo "🌐 INFORMACIÓN DE RED:"
 echo "======================"
@@ -158,14 +189,17 @@ echo "CIDR: $NETWORK_CIDR"
 echo "Gateway: $NETWORK_GATEWAY"
 echo "VLAN ID: $VLAN_ID"
 echo ""
-echo "🔌 ACCESO DESDE TU LAPTOP:"
-echo "=========================="
+echo "🔌 ACCESO DESDE TU LAPTOP (VPN PUCP):"
+echo "====================================="
 echo ""
-echo "La VM está configurada con acceso a internet y se encuentra en la VLAN $VLAN_ID"
-echo "Para acceder desde tu laptop a través de la VPN:"
+echo "VM1 ($VM1_NAME):"
+echo "  ❌ No accesible desde exterior"
+echo "  ✅ Solo comunicación interna con VM2"
 echo ""
-echo "1. Conectar a la VPN de PUCP"
-echo "2. La VM debería ser accesible a través del gateway: $NETWORK_GATEWAY"
+echo "VM2 ($VM2_NAME):"
+echo "  ✅ SSH: ssh ubuntu@192.168.201.1 -p XXXX  # Puerto según servidor"
+echo "  ✅ Puede navegar internet"
+echo "  ✅ Comunicación con VM1 via $NETWORK_CIDR"
 echo ""
 echo "🔧 COMANDOS ÚTILES:"
 echo "==================="
@@ -201,6 +235,17 @@ echo ""
 echo "# Verificar VLAN configurada:"
 echo "ip link show | grep vlan$VLAN_ID"
 echo ""
+echo "🧪 VERIFICAR CONECTIVIDAD:"
+echo "========================="
+echo ""
+echo "# Desde VM2, probar ping a VM1:"
+echo "ping $VM1_IP"
+echo ""
+echo "# Desde VM2, probar internet:"
+echo "ping 8.8.8.8"
+echo ""
+echo "# Desde VM1, NO debería tener internet:"
+echo "# (Este comando debería fallar)"
 
 # Mostrar datos técnicos del deployment si están disponibles
 if echo "$DEPLOYED_VMS" | jq -e '. | length > 0' > /dev/null 2>&1; then

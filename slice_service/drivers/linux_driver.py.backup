@@ -29,7 +29,7 @@ class LinuxClusterDriver(BaseDriver):
         # Configuración del cluster según tu documento
         self.hypervisors = {
             'server1': {
-                'uri': 'qemu+ssh://ubuntu@pucp-server1/system',
+            'uri': 'qemu+ssh://ubuntu@pucp-server1/system',
                 'ip': 'pucp-server1',
                 'port': 5811,
                 'max_vcpus': 3,      # Real: 4 cores
@@ -62,31 +62,32 @@ class LinuxClusterDriver(BaseDriver):
             },
         }
 
-        self.network_client = NetworkServiceClient(token=token)
+        self.network_client = NetworkServiceClient(token=self._get_service_token())
 
         self.network_config = {
             'management': {
                 'bridge': 'br-mgmt',
-                'cidr': '192.168.201.0/24',
+                'cidr': '192.168.201.0/24',  # ✓ Correcto para management
                 'gateway': '192.168.201.1',
-                'vlan_id': None,
                 'internet_access': False,
-                'use_network_service': False  # Management no usa Network Service
+                'vlan_range': (200, 299),          # ← NECESARIO
+                'use_network_service': True,       # ← NECESARIO  
+                'is_provider': False
             },
             'trunk': {
                 'bridge': 'ovs1',
-                'cidr': '10.60.1.0/24',
+                'cidr': '10.60.1.0/24',     # ✓ Correcto según documento
                 'gateway': '10.60.1.1',
-                'vlan_range': (100, 199),
-                'internet_access': True,
-                'use_network_service': True,  # ← Usar Network Service
+                'internet_access': True,    # ← Solo si se especifica explícitamente
+                'use_network_service': True,
                 'is_provider': False
             },
             'data': {
                 'bridge': 'ovs1',
+                'cidr': '10.60.1.0/24',     # ← Debe usar subrangos de 10.60.1.x
+                'internet_access': False,   # ✓ Correcto
                 'vlan_range': (200, 299),
-                'internet_access': False,
-                'use_network_service': True,  # ← Usar Network Service
+                'use_network_service': True,
                 'is_provider': False
             },
             'provider': {
@@ -130,18 +131,38 @@ class LinuxClusterDriver(BaseDriver):
         
         # Imágenes disponibles
         self.available_images = {
-            'ubuntu-20.04': {
+            'ubuntu-20.04-server': {
                 'path': '/home/ubuntu/vm-images/ubuntu-20.04-server.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'ubuntu20.04'
             },
-            'ubuntu-22.04': {
-                'path': '/home/ubuntu/vm-images/ubuntu-22.04-server.qcow2',
+            'alpine-network': {
+                'path': '/home/ubuntu/vm-images/alpine-network.qcow2',
+                'os_type': 'linux',
+                'os_variant': 'alpinelinux3.18'
+            },
+            'ubuntu-22.04-minimal': {
+                'path': '/home/ubuntu/vm-images/ubuntu-22.04-minimal.qcow2',
+                'os_type': 'linux',
+                'os_variant': 'ubuntu20.04'
+            },
+            'network-tools': {
+                'path': '/home/ubuntu/vm-images/network-tools.qcow2',
+                'os_type': 'linux',
+                'os_variant': 'generic'
+            },
+            'ubuntu-22.04-minimal': {
+                'path': '/home/ubuntu/vm-images/ubuntu-22.04-minimal.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'ubuntu22.04'
             },
-            'centos-8': {
-                'path': '/home/ubuntu/vm-images/centos-8-stream.qcow2',
+            'cirros-0.5.2': {
+                'path': '/home/ubuntu/vm-images/cirros-0.5.2.qcow2',
+                'os_type': 'linux',
+                'os_variant': 'generic'
+            },
+            'centos-8-minimal': {
+                'path': '/home/ubuntu/vm-images/centos-8-minimal.qcow2',
                 'os_type': 'linux',
                 'os_variant': 'centos8'
             }
@@ -149,6 +170,27 @@ class LinuxClusterDriver(BaseDriver):
         
         self.connections = {}  # Cache de conexiones libvirt
     
+
+    def _get_service_token(self):
+        """Obtiene token de autenticación para comunicación entre servicios"""
+        try:
+            import requests
+            response = requests.post(
+                "http://localhost:5001/login",
+                json={"username": "testuser", "password": "testpass123"},
+                timeout=10
+            )
+            if response.status_code == 200:
+                token = response.json().get("token")
+                logger.info("✓ Token de servicio obtenido para Network Service")
+                return token
+            else:
+                logger.error(f"Error obteniendo token de servicio: {response.status_code}")
+                return None
+        except Exception as e:
+            logger.error(f"Excepción obteniendo token de servicio: {e}")
+            return None
+
     def get_connection(self, server_name: str) -> libvirt.virConnect:
         """Obtiene o crea conexión a un hypervisor"""
         if server_name not in self.hypervisors:
@@ -223,10 +265,15 @@ class LinuxClusterDriver(BaseDriver):
                 'errors': [str(e)]
             }
 
+    
     def _create_r5_network(self, network_config: Dict, slice_id: str) -> Dict:
-        """Crea una red específica según tipo R5 con integración Network Service"""
-        network_name = f"{slice_id}-{network_config['name']}"
+        """Crea una red específica según tipo R5 con nombres cortos"""
+        # USAR NOMBRE CORTO - solo los últimos 8 chars del slice_id + tipo
+        short_slice_id = slice_id[-8:]  # ej: ac8282
         network_type = network_config.get('network_type', 'data')
+        
+        # Nombre corto: ej "ac8282-ext" (10 chars)
+        network_name = f"{short_slice_id}-{network_type[:3]}"
         
         if network_type not in self.network_config:
             raise ValueError(f"Unsupported network type: {network_type}")
@@ -245,63 +292,138 @@ class LinuxClusterDriver(BaseDriver):
         else:
             raise ValueError(f"Network type {network_type} not implemented")
 
-    def _configure_ovs_trunk_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
-        """Configura VLAN trunk con integración Network Service"""
+    def _configure_openflow_rules(self, vlan_id: int, vlan_interface: str, server_name: str = None):
+        """
+        Configura reglas OpenFlow para permitir comunicación en la VLAN
+        """
         try:
+            logger.info(f"Configuring OpenFlow rules for VLAN {vlan_id} interface {vlan_interface}")
+            
+            # Comandos OpenFlow para configurar la VLAN
+            openflow_commands = [
+                # Regla básica para permitir tráfico normal en la VLAN
+                f"ovs-ofctl add-flow ovs1 'table=0,priority=100,dl_vlan={vlan_id},actions=normal'",
+                
+                # Regla específica para ARP en la VLAN
+                f"ovs-ofctl add-flow ovs1 'table=0,priority=200,dl_vlan={vlan_id},dl_type=0x0806,actions=normal'",
+                
+                # Regla para IPv4 en la VLAN
+                f"ovs-ofctl add-flow ovs1 'table=0,priority=150,dl_vlan={vlan_id},dl_type=0x0800,actions=normal'",
+                
+                # Regla para permitir tráfico desde/hacia la interfaz VLAN
+                f"ovs-ofctl add-flow ovs1 'table=0,priority=100,in_port=LOCAL,dl_vlan={vlan_id},actions=normal'",
+                
+                # Regla de fallback para asegurar conectividad básica si no hay otras reglas
+                f"ovs-ofctl add-flow ovs1 'table=0,priority=10,actions=normal'"
+            ]
+            
+            # Si se especifica servidor, ejecutar en ese servidor, sino en todos
+            servers_to_configure = [server_name] if server_name else list(self.hypervisors.keys())
+            
+            for srv in servers_to_configure:
+                server_ip = self.hypervisors[srv]['ip']
+                
+                for cmd in openflow_commands:
+                    ssh_cmd = ['ssh', f'ubuntu@{server_ip}', 'sudo', cmd]
+                    try:
+                        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=30)
+                        if result.returncode == 0:
+                            logger.debug(f"✓ OpenFlow rule added on {srv}: {cmd}")
+                        else:
+                            logger.warning(f"⚠ OpenFlow rule failed on {srv}: {result.stderr}")
+                    except subprocess.TimeoutExpired:
+                        logger.warning(f"⚠ OpenFlow command timed out on {srv}")
+                    except Exception as e:
+                        logger.warning(f"⚠ OpenFlow command error on {srv}: {e}")
+            
+            # Verificar que los flujos se agregaron correctamente
+            self._verify_openflow_rules(vlan_id, servers_to_configure[0])
+            
+            logger.info(f"✓ OpenFlow rules configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring OpenFlow rules: {e}")
+            # No lanzar excepción para no romper el deployment
+            logger.warning("Continuing deployment without OpenFlow optimization")
+
+    def _verify_openflow_rules(self, vlan_id: int, server_name: str):
+        """Verifica que las reglas OpenFlow se agregaron correctamente"""
+        try:
+            server_ip = self.hypervisors[server_name]['ip']
+            verify_cmd = ['ssh', f'ubuntu@{server_ip}', 'sudo', 'ovs-ofctl', 'dump-flows', 'ovs1']
+            result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0:
+                flows = result.stdout
+                if f'dl_vlan={vlan_id}' in flows:
+                    logger.info(f"✓ OpenFlow rules verified for VLAN {vlan_id}")
+                    return True
+                else:
+                    logger.warning(f"⚠ No OpenFlow rules found for VLAN {vlan_id}")
+            else:
+                logger.warning(f"⚠ Could not verify OpenFlow rules: {result.stderr}")
+                
+        except Exception as e:
+            logger.warning(f"⚠ Error verifying OpenFlow rules: {e}")
+        
+        return False
+
+
+    def _configure_ovs_trunk_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
+        """Configura VLAN trunk con nombres cortos + OpenFlow - MEJORADO"""
+        try:
+            # USAR NOMBRE CORTO para la interfaz
+            vlan_interface = f"vlan{vlan_id}"  # ej: vlan103 (7 chars)
+            
             ovs_commands = [
-                # Crear puerto trunk VLAN
-                f"ovs-vsctl add-port {bridge} {name} tag={vlan_id}",
+                # 1. Eliminar interfaz si existe (cleanup)
+                f"ovs-vsctl --if-exists del-port {bridge} {vlan_interface}",
                 
-                # Configurar como puerto interno
-                f"ovs-vsctl set interface {name} type=internal",
+                # 2. Crear puerto VLAN con nombre corto
+                f"ovs-vsctl add-port {bridge} {vlan_interface} tag={vlan_id}",
                 
-                # Configurar MTU optimizado
-                f"ip link set {name} mtu 1500",
+                # 3. Configurar como puerto interno
+                f"ovs-vsctl set interface {vlan_interface} type=internal",
                 
-                # Activar interfaz
-                f"ip link set {name} up",
+                # 4. Configurar MTU
+                f"ip link set {vlan_interface} mtu 1500",
                 
-                # Configurar IP del gateway en el bridge
-                f"ip addr add {config.get('gateway', '10.60.1.1')}/24 dev {name}",
+                # 5. Activar interfaz
+                f"ip link set {vlan_interface} up",
                 
-                # Habilitar forwarding para esta interfaz
-                f"echo 1 > /proc/sys/net/ipv4/conf/{name}/forwarding"
+                # 6. Configurar IP del gateway
+                f"ip addr add {config.get('gateway', '10.60.1.1')}/24 dev {vlan_interface}",
+                
+                # 7. Habilitar forwarding
+                f"sudo /usr/local/bin/configure-forwarding.sh {vlan_interface}"
             ]
             
             self._execute_ovs_commands(ovs_commands, "trunk network")
-            logger.info(f"✓ OVS trunk network {name} configured with VLAN {vlan_id}")
+            
+            # ✨ NUEVO: Configurar reglas OpenFlow para esta VLAN
+            self._configure_openflow_rules(vlan_id, vlan_interface)
+            
+            logger.info(f"✓ OVS trunk network {vlan_interface} configured with VLAN {vlan_id}")
             
         except Exception as e:
             logger.error(f"Error configuring OVS trunk integration: {e}")
             raise
 
     def _configure_ovs_data_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
-        """Configura VLAN de datos con integración Network Service"""
+        """Configura VLAN de datos con integración Network Service + OpenFlow"""
         try:
             ovs_commands = [
-                # Crear puerto data VLAN
-                f"ovs-vsctl add-port {bridge} {name} tag={vlan_id}",
-                
-                # Configurar como puerto interno
-                f"ovs-vsctl set interface {name} type=internal",
-                
-                # Configurar MTU estándar
-                f"ip link set {name} mtu 1500",
-                
-                # Activar interfaz
-                f"ip link set {name} up",
-                
-                # Configurar IP del gateway si se especifica
-                f"ip addr add {config.get('gateway', '192.168.100.1')}/24 dev {name}" if config.get('gateway') else "",
-                
-                # NO habilitar forwarding (red aislada)
-                f"echo 0 > /proc/sys/net/ipv4/conf/{name}/forwarding"
+                # ... código existente igual ...
             ]
             
             # Filtrar comandos vacíos
             ovs_commands = [cmd for cmd in ovs_commands if cmd]
             
             self._execute_ovs_commands(ovs_commands, "data network")
+            
+            # ✨ NUEVO: Configurar reglas OpenFlow para data network
+            self._configure_openflow_rules(vlan_id, name)
+            
             logger.info(f"✓ OVS data network {name} configured with VLAN {vlan_id}")
             
         except Exception as e:
@@ -309,40 +431,19 @@ class LinuxClusterDriver(BaseDriver):
             raise
 
     def _configure_ovs_provider_integration(self, bridge: str, vlan_id: int, name: str, config: Dict):
-        """Configura red provider con capacidades completas"""
+        """Configura red provider con capacidades completas + OpenFlow"""
         try:
             ovs_commands = [
-                # Crear puerto provider con configuración avanzada
-                f"ovs-vsctl add-port {bridge} {name} tag={vlan_id}",
-                
-                # Configurar como puerto provider
-                f"ovs-vsctl set interface {name} type=internal",
-                f"ovs-vsctl set port {name} vlan_mode=access",
-                
-                # Configurar MTU jumbo frames si se solicita
-                f"ip link set {name} mtu {config.get('mtu', 1500)}",
-                
-                # Activar interfaz
-                f"ip link set {name} up",
-                
-                # Configurar IP del gateway provider
-                f"ip addr add {config.get('gateway', '10.60.1.1')}/24 dev {name}",
-                
-                # Habilitar forwarding completo
-                f"echo 1 > /proc/sys/net/ipv4/conf/{name}/forwarding",
-                f"echo 1 > /proc/sys/net/ipv4/conf/{name}/proxy_arp",
-                
-                # Configurar como provider bridge
-                f"ovs-vsctl set bridge {bridge} other-config:forward-bpdu=true",
-                
-                # Configurar spanning tree si es necesario
-                f"ovs-vsctl set bridge {bridge} stp_enable=true" if config.get('stp_enable') else ""
+                # ... código existente igual ...
             ]
             
             # Filtrar comandos vacíos
             ovs_commands = [cmd for cmd in ovs_commands if cmd]
             
             self._execute_ovs_commands(ovs_commands, "provider network")
+            
+            # ✨ NUEVO: Configurar reglas OpenFlow para provider network
+            self._configure_openflow_rules(vlan_id, name)
             
             # Configuración adicional para provider networks
             self._configure_provider_nat_rules(vlan_id, config['cidr'])
@@ -741,14 +842,15 @@ class LinuxClusterDriver(BaseDriver):
             logger.error(f"Error creating integrated provider network: {e}")
             raise
             
-    def create_vm(self, vm_config: Dict, server_name: str, 
-              slice_id: str = None, networks: List[Dict] = None) -> Dict:
-        """
-        Crea una VM en el servidor especificado
-        """
+    def create_vm(self, vm_config: Dict, server_name: str, slice_id: str = None, networks: List[Dict] = None):
         conn = None
         try:
             logger.info(f"Creating VM {vm_config['name']} on server {server_name}")
+            node_internet_access = vm_config.get('internet_access', False)
+            if node_internet_access:
+                logger.info(f"VM {vm_config['name']} will have internet access")
+            else:
+                logger.info(f"VM {vm_config['name']} will be internal-only")
             logger.debug(f"VM config: {vm_config}")
             logger.debug(f"Available hypervisors: {list(self.hypervisors.keys())}")
             
@@ -777,6 +879,16 @@ class LinuxClusterDriver(BaseDriver):
             domain = conn.createXML(vm_xml, 0)
             if not domain:
                 raise Exception("Failed to create VM")
+            
+            if networks:
+                for network in networks:
+                    network_internet = network.get('internet_access', False)
+                    final_internet_access = node_internet_access and network_internet
+                    
+                    if final_internet_access:
+                        self._configure_internet_access_for_vm(vm_config, network)
+                    else:
+                        self._configure_internal_only_for_vm(vm_config, network)
             
             # Esperar a que arranque
             self._wait_for_vm_boot(domain, timeout=60)
@@ -1025,7 +1137,15 @@ class LinuxClusterDriver(BaseDriver):
             return False    
     
     def deploy_slice(self, slice_config: Dict, placement: Dict) -> Dict:
-        """Despliega slice con soporte completo R5"""
+        # Validar configuración antes del deployment
+        for vm_config in slice_config.get('nodes', []):
+            internet_access = vm_config.get('internet_access', False)
+            vm_name = vm_config['name']
+            
+            if internet_access:
+                logger.info(f"VM {vm_name} configured WITH internet access")
+            else:
+                logger.info(f"VM {vm_name} configured WITHOUT internet access (internal only)")
         deployed_vms = []
         created_networks = []
         errors = []
@@ -1120,6 +1240,34 @@ class LinuxClusterDriver(BaseDriver):
                 'created_networks': created_networks
             }
 
+    def _configure_internet_access_for_vm(self, vm_config: Dict, network: Dict):
+        """Configura acceso a internet para una VM específica"""
+        try:
+            vlan_id = network.get('vlan_id')
+            cidr = network.get('cidr')
+            vm_name = vm_config.get('name')
+            
+            if vlan_id and cidr:
+                logger.info(f"Configuring internet access for VM {vm_name} on VLAN {vlan_id}")
+                # La configuración de red ya se hace a nivel de red, aquí solo log
+            else:
+                logger.warning(f"Cannot configure internet for VM {vm_name}: missing network info")
+                
+        except Exception as e:
+            logger.error(f"Error configuring internet access for VM: {e}")
+
+    def _configure_internal_only_for_vm(self, vm_config: Dict, network: Dict):
+        """Configura VM para acceso solo interno"""
+        try:
+            vm_name = vm_config.get('name')
+            vlan_id = network.get('vlan_id')
+            
+            logger.info(f"VM {vm_name} configured for internal-only access on VLAN {vlan_id}")
+            # Las reglas de bloqueo se aplican a nivel de red, no por VM individual
+            
+        except Exception as e:
+            logger.error(f"Error configuring internal access for VM: {e}")
+    
     def _configure_inter_network_routing(self, networks: List[Dict], slice_id: str):
         """Configura routing entre diferentes tipos de red"""
         try:
@@ -1392,6 +1540,382 @@ class LinuxClusterDriver(BaseDriver):
             }        
     
     # Métodos privados auxiliares
+    def _cleanup_internet_access(self, vlan_id: int, cidr: str):
+        """Limpia configuración de acceso a internet para una VLAN"""
+        try:
+            logger.info(f"Cleaning up internet access for VLAN {vlan_id}")
+            
+            vlan_interface = f"vlan{vlan_id}"
+            outbound_interface = 'ens3'
+            
+            cleanup_commands = [
+                # Limpiar reglas NAT
+                f"iptables -t nat -D POSTROUTING -s {cidr} -o {outbound_interface} -j MASQUERADE 2>/dev/null || true",
+                
+                # Limpiar reglas de forwarding
+                f"iptables -D FORWARD -s {cidr} -o {outbound_interface} -j ACCEPT 2>/dev/null || true",
+                f"iptables -D FORWARD -i {outbound_interface} -d {cidr} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT 2>/dev/null || true",
+                
+                # Limpiar marcado de paquetes
+                f"iptables -t mangle -D PREROUTING -s {cidr} -j MARK --set-mark {vlan_id} 2>/dev/null || true",
+                
+                # Limpiar reglas de firewall específicas
+                f"iptables -D FORWARD -s {cidr} -p tcp --dport 80 -j ACCEPT 2>/dev/null || true",
+                f"iptables -D FORWARD -s {cidr} -p tcp --dport 443 -j ACCEPT 2>/dev/null || true",
+                f"iptables -D FORWARD -s {cidr} -p udp --dport 53 -j ACCEPT 2>/dev/null || true",
+                
+                # Limpiar rutas
+                f"ip route del {cidr} table internet 2>/dev/null || true",
+                f"ip rule del from {cidr} table internet 2>/dev/null || true",
+                
+                # Limpiar QoS
+                f"tc qdisc del dev {vlan_interface} root 2>/dev/null || true",
+                
+                # Limpiar DNS config
+                f"rm -f /etc/dnsmasq.d/vlan{vlan_id}.conf",
+                f"systemctl is-active dnsmasq && systemctl reload dnsmasq || true"
+            ]
+            
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in cleanup_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo bash -c "{cmd}"']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                except subprocess.CalledProcessError:
+                    # Es normal que algunos comandos fallen si las reglas no existen
+                    pass
+            
+            logger.info(f"✓ Internet access cleanup completed for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up internet access: {e}")
+            # No fallar el cleanup general por esto
+
+    def _configure_internet_blocking_rules(self, vlan_id: int, cidr: str):
+        """Bloquea acceso a internet para VMs sin internet_access"""
+        blocking_commands = [
+            # Permitir solo tráfico interno del cluster
+            f"iptables -I FORWARD -s {cidr} -d 10.60.1.0/24 -j ACCEPT",
+            f"iptables -I FORWARD -d {cidr} -s 10.60.1.0/24 -j ACCEPT",
+            
+            # Bloquear todo tráfico externo
+            f"iptables -A FORWARD -s {cidr} -d 0.0.0.0/0 -j DROP",
+            f"iptables -A FORWARD -d {cidr} -s 0.0.0.0/0 -j DROP",
+            
+            # Log para debugging
+            f"iptables -A FORWARD -s {cidr} -j LOG --log-prefix 'BLOCKED-VM-{vlan_id}: '"
+        ]
+        
+        self._execute_commands_on_servers(blocking_commands, f"internet blocking VLAN {vlan_id}")
+    
+    def _configure_internet_access_integrated(self, vlan_id: int, cidr: str, enable_internet: bool = False):
+        """Configura acceso a internet SOLO si está habilitado explícitamente"""
+        if not enable_internet:
+            # Configurar reglas de BLOQUEO
+            self._configure_internet_blocking_rules(vlan_id, cidr)
+            logger.info(f"Internet access BLOCKED for VLAN {vlan_id}")
+            return
+        
+        try:
+            logger.info(f"Configuring internet access for VLAN {vlan_id} with CIDR {cidr}")
+            
+            # 1. Configurar NAT y masquerading
+            self._configure_nat_rules(vlan_id, cidr)
+            
+            # 2. Configurar reglas de firewall para internet
+            self._configure_internet_firewall_rules(vlan_id, cidr)
+            
+            # 3. Configurar routing para acceso a internet
+            self._configure_internet_routing(vlan_id, cidr)
+            
+            # 4. Configurar DNS forwarding
+            self._configure_dns_forwarding(vlan_id, cidr)
+            
+            # 5. Habilitar IP forwarding si no está habilitado
+            self._enable_ip_forwarding()
+            
+            # 6. Configurar reglas de QoS para internet (opcional)
+            self._configure_internet_qos(vlan_id, cidr)
+            
+            logger.info(f"✓ Internet access configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring internet access for VLAN {vlan_id}: {e}")
+            raise
+
+    def _configure_nat_rules(self, vlan_id: int, cidr: str):
+        """Configura reglas NAT para salida a internet"""
+        try:
+            # Determinar interfaz de salida (típicamente la interfaz con acceso a internet)
+            outbound_interface = 'ens3'  # Interfaz hacia el gateway/internet
+            vlan_interface = f"vlan{vlan_id}"
+            
+            nat_commands = [
+                # SNAT/Masquerading para salida a internet
+                f"iptables -t nat -A POSTROUTING -s {cidr} -o {outbound_interface} -j MASQUERADE",
+                
+                # Permitir forwarding desde la VLAN hacia internet
+                f"iptables -A FORWARD -s {cidr} -o {outbound_interface} -j ACCEPT",
+                
+                # Permitir respuestas de vuelta
+                f"iptables -A FORWARD -i {outbound_interface} -d {cidr} -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT",
+                
+                # Marcar paquetes para tracking (útil para QoS y logging)
+                f"iptables -t mangle -A PREROUTING -s {cidr} -j MARK --set-mark {vlan_id}",
+                
+                # Logging opcional para debugging
+                f"iptables -A FORWARD -s {cidr} -j LOG --log-prefix 'VLAN{vlan_id}-OUT: ' --log-level 4" if logger.level == logging.DEBUG else ""
+            ]
+            
+            # Filtrar comandos vacíos
+            nat_commands = [cmd for cmd in nat_commands if cmd]
+            
+            # Ejecutar en servidor gateway (el que tiene acceso a internet)
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in nat_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    result = subprocess.run(ssh_cmd, check=True, capture_output=True, 
+                                        timeout=30, text=True)
+                    logger.debug(f"✓ NAT rule: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"✗ NAT rule failed: {cmd} - {e.stderr}")
+                    # Continuar con otros comandos, algunos pueden fallar si ya existen
+            
+            logger.info(f"✓ NAT rules configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring NAT rules: {e}")
+            raise
+
+    def _configure_internet_firewall_rules(self, vlan_id: int, cidr: str):
+        import ipaddress
+        local_network = ipaddress.IPv4Network(cidr, strict=False)
+        
+        firewall_commands = [
+            # Permitir tráfico HTTP/HTTPS saliente
+            f"iptables -A FORWARD -s {cidr} -p tcp --dport 80 -j ACCEPT",
+            f"iptables -A FORWARD -s {cidr} -p tcp --dport 443 -j ACCEPT",
+            f"iptables -A FORWARD -s {cidr} -p udp --dport 53 -j ACCEPT",
+            
+            # PERMITIR tráfico interno en el cluster Linux (10.60.1.0/24)
+            f"iptables -I FORWARD -s {cidr} -d 10.60.1.0/24 -j ACCEPT",
+            
+            # BLOQUEAR otras redes privadas
+            f"iptables -A FORWARD -s {cidr} -d 192.168.0.0/16 -j DROP",
+            f"iptables -A FORWARD -s {cidr} -d 172.16.0.0/12 -j DROP",
+            # Solo bloquear otras redes 10.x.x.x, NO la tuya
+            f"iptables -A FORWARD -s {cidr} -d 10.0.0.0/16 -j DROP",
+            f"iptables -A FORWARD -s {cidr} -d 10.61.0.0/16 -j DROP",
+            f"iptables -A FORWARD -s {cidr} -d 10.62.0.0/14 -j DROP",
+        ]
+        try:    
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in firewall_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    logger.debug(f"✓ Firewall rule: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"✗ Firewall rule failed: {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ Firewall rules configured for internet access VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring firewall rules: {e}")
+            raise
+
+    
+    def _configure_internet_routing(self, vlan_id: int, cidr: str):
+        """Configura routing específico para acceso a internet - CORREGIDO"""
+        try:
+            import ipaddress
+            network = ipaddress.IPv4Network(cidr, strict=False)
+            gateway_ip = str(list(network.hosts())[0])  # Primera IP como gateway
+            vlan_interface = f"vlan{vlan_id}"
+            
+            # Usar tabla numérica en lugar de nombre
+            table_id = 100 + vlan_id  # Tabla única por VLAN
+            
+            routing_commands = [
+                # NO configurar IP aquí - ya se hizo en OVS setup
+                
+                # Crear tabla de routing si no existe
+                f"echo '{table_id} vlan{vlan_id}' >> /etc/iproute2/rt_tables 2>/dev/null || true",
+                
+                # Configurar rutas en la tabla específica
+                f"ip route add {cidr} dev {vlan_interface} table {table_id}",
+                f"ip route add default via 10.60.1.1 table {table_id}",
+                
+                # Configurar policy routing
+                f"ip rule add from {cidr} table {table_id} priority {100 + vlan_id}",
+                
+                # Flush route cache
+                f"ip route flush cache"
+            ]
+            
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in routing_commands:
+                if not cmd:  # Skip empty commands
+                    continue
+                    
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    logger.debug(f"✓ Routing: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"✗ Routing command failed: {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ Internet routing configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring internet routing: {e}")
+            raise
+
+    def _configure_dns_forwarding(self, vlan_id: int, cidr: str):
+        """Configura forwarding de DNS para la red"""
+        try:
+            dns_commands = [
+                # Configurar dnsmasq para esta red (si está instalado)
+                f"systemctl is-active dnsmasq && echo 'interface=vlan{vlan_id}' >> /etc/dnsmasq.d/vlan{vlan_id}.conf || true",
+                f"systemctl is-active dnsmasq && echo 'dhcp-range=vlan{vlan_id},{cidr.split('/')[0].rsplit('.', 1)[0]}.10,{cidr.split('/')[0].rsplit('.', 1)[0]}.50,12h' >> /etc/dnsmasq.d/vlan{vlan_id}.conf || true",
+                f"systemctl is-active dnsmasq && systemctl reload dnsmasq || true",
+                
+                # Configurar resolv.conf para forwarding
+                f"echo 'nameserver 8.8.8.8' > /etc/resolv.conf.vlan{vlan_id}",
+                f"echo 'nameserver 1.1.1.1' >> /etc/resolv.conf.vlan{vlan_id}",
+                
+                # Configurar iptables para permitir DNS forwarding
+                f"iptables -A INPUT -i vlan{vlan_id} -p udp --dport 53 -j ACCEPT",
+                f"iptables -A INPUT -i vlan{vlan_id} -p tcp --dport 53 -j ACCEPT"
+            ]
+            
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in dns_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo bash -c "{cmd}"']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    logger.debug(f"✓ DNS: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.debug(f"DNS command (non-critical): {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ DNS forwarding configured for VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.error(f"Error configuring DNS forwarding: {e}")
+            # No fallar por DNS, es opcional
+            pass
+
+    def _enable_ip_forwarding(self):
+        """Habilita IP forwarding en el sistema"""
+        try:
+            forwarding_commands = [
+                # Habilitar IP forwarding temporalmente
+                "echo 1 > /proc/sys/net/ipv4/ip_forward",
+                
+                # Hacer permanente el cambio
+                "sed -i 's/#net.ipv4.ip_forward=1/net.ipv4.ip_forward=1/' /etc/sysctl.conf",
+                "sed -i 's/net.ipv4.ip_forward=0/net.ipv4.ip_forward=1/' /etc/sysctl.conf",
+                
+                # Si no existe la línea, agregarla
+                "grep -q 'net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf",
+                
+                # Aplicar cambios
+                "sysctl -p"
+            ]
+            
+            # Aplicar en todos los servidores
+            for server_name in self.hypervisors.keys():
+                server_ip = self.hypervisors[server_name]['ip']
+                
+                for cmd in forwarding_commands:
+                    ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                            f'ubuntu@{server_ip}', f'sudo {cmd}']
+                    try:
+                        subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    except subprocess.CalledProcessError as e:
+                        logger.debug(f"IP forwarding command on {server_name}: {e.stderr}")
+            
+            logger.info("✓ IP forwarding enabled on all servers")
+            
+        except Exception as e:
+            logger.error(f"Error enabling IP forwarding: {e}")
+            raise
+
+    def _configure_internet_qos(self, vlan_id: int, cidr: str):
+        """Configura QoS para tráfico de internet (opcional)"""
+        try:
+            vlan_interface = f"vlan{vlan_id}"
+            
+            qos_commands = [
+                # Configurar traffic shaping básico
+                f"tc qdisc add dev {vlan_interface} root handle 1: htb default 30",
+                
+                # Clase principal (100 Mbps por defecto)
+                f"tc class add dev {vlan_interface} parent 1: classid 1:1 htb rate 100mbit",
+                
+                # Clase para tráfico de alta prioridad (50 Mbps garantizado)
+                f"tc class add dev {vlan_interface} parent 1:1 classid 1:10 htb rate 50mbit ceil 100mbit",
+                
+                # Clase para tráfico normal (30 Mbps garantizado)
+                f"tc class add dev {vlan_interface} parent 1:1 classid 1:20 htb rate 30mbit ceil 80mbit",
+                
+                # Clase para tráfico de baja prioridad (20 Mbps garantizado)
+                f"tc class add dev {vlan_interface} parent 1:1 classid 1:30 htb rate 20mbit ceil 60mbit",
+                
+                # Filtros para clasificar tráfico
+                f"tc filter add dev {vlan_interface} parent 1: protocol ip prio 1 u32 match ip dport 80 0xffff flowid 1:20",
+                f"tc filter add dev {vlan_interface} parent 1: protocol ip prio 1 u32 match ip dport 443 0xffff flowid 1:20",
+                f"tc filter add dev {vlan_interface} parent 1: protocol ip prio 1 u32 match ip dport 53 0xffff flowid 1:10",
+                f"tc filter add dev {vlan_interface} parent 1: protocol ip prio 2 u32 match ip src {cidr} flowid 1:30"
+            ]
+            
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in qos_commands:
+                ssh_cmd = ['ssh', '-o', 'StrictHostKeyChecking=no', 
+                        f'ubuntu@{server_ip}', f'sudo {cmd}']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    logger.debug(f"✓ QoS: {cmd}")
+                except subprocess.CalledProcessError as e:
+                    logger.debug(f"QoS command (optional): {cmd} - {e.stderr}")
+            
+            logger.info(f"✓ QoS configured for internet access VLAN {vlan_id}")
+            
+        except Exception as e:
+            logger.warning(f"QoS configuration failed (non-critical): {e}")
+            # QoS es opcional, no fallar por esto
+
+    def _get_internet_gateway_server(self) -> str:
+        """Determina qué servidor actúa como gateway de internet"""
+        # Por defecto, usar server1 como gateway
+        # En un entorno real, esto podría determinarse dinámicamente
+        gateway_server = 'server1'
+        
+        # Verificar que el servidor existe
+        if gateway_server not in self.hypervisors:
+            # Fallback al primer servidor disponible
+            gateway_server = list(self.hypervisors.keys())[0]
+            logger.warning(f"Using {gateway_server} as internet gateway (fallback)")
+        
+        return gateway_server
 
     def _allocate_vlan(self, vlan_range: Tuple[int, int], slice_id: str) -> Optional[int]:
         """Asigna una VLAN del rango especificado"""
@@ -2083,11 +2607,191 @@ class LinuxClusterDriver(BaseDriver):
         try:
             result = subprocess.run(ssh_cmd, capture_output=True, text=True, check=True)
             logger.info(f"Disk created: {vm_disk_path}")
+            self._configure_vm_credentials(vm_disk_path, vm_name, server_name)
             return vm_disk_path
         except subprocess.CalledProcessError as e:
             logger.error(f"Failed to create disk: {e.stderr}")
             raise Exception(f"Disk creation failed: {e.stderr}")
+
+    def _configure_vm_credentials(self, vm_disk_path: str, vm_name: str, server_name: str):
+        """
+        Configura credenciales por defecto en la VM usando virt-customize
+        """
+        try:
+            logger.info(f"Configuring default credentials for VM {vm_name}")
+            server_ip = self.hypervisors[server_name]['ip']
             
+            # Verificar si virt-customize está disponible
+            check_cmd = ['ssh', f'ubuntu@{server_ip}', 'which', 'virt-customize']
+            result = subprocess.run(check_cmd, capture_output=True, text=True)
+            
+            if result.returncode != 0:
+                logger.info("Installing libguestfs-tools for VM customization...")
+                # Comando corregido para SSH
+                install_cmd = [
+                    'ssh', f'ubuntu@{server_ip}', 
+                    'sudo', 'bash', '-c', 
+                    'apt update && apt install -y libguestfs-tools'
+                ]
+                install_result = subprocess.run(install_cmd, capture_output=True, text=True, timeout=300)
+                if install_result.returncode != 0:
+                    logger.error(f"Failed to install libguestfs-tools: {install_result.stderr}")
+                    return False
+            
+            # Configurar credenciales usando virt-customize
+            credential_cmd = [
+                'ssh', f'ubuntu@{server_ip}',
+                'sudo', 'virt-customize', '-a', vm_disk_path,
+                '--root-password', 'password:ubuntu',
+                '--run-command', 'useradd -m -s /bin/bash ubuntu 2>/dev/null || true',
+                '--password', 'ubuntu:password:ubuntu', 
+                '--run-command', 'usermod -aG sudo ubuntu',
+                '--run-command', 'sed -i "s/#*PasswordAuthentication.*/PasswordAuthentication yes/g" /etc/ssh/sshd_config',
+                '--run-command', 'systemctl enable ssh',
+                # Crear directorio sudoers.d si no existe
+                '--run-command', 'mkdir -p /etc/sudoers.d',
+                '--run-command', 'chmod 755 /etc/sudoers.d',
+                # Crear archivo sudoers con permisos correctos
+                '--run-command', 'echo "ubuntu ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/ubuntu',
+                '--run-command', 'chmod 440 /etc/sudoers.d/ubuntu',
+                '--run-command', 'chown root:root /etc/sudoers.d/ubuntu',
+                # Verificar sintaxis de sudoers
+                '--run-command', 'visudo -c || echo "Warning: sudoers syntax check failed"'
+            ]
+            
+            result = subprocess.run(credential_cmd, capture_output=True, text=True, timeout=120)
+            
+            if result.returncode == 0:
+                logger.info(f"✓ Default credentials configured for VM {vm_name}")
+                logger.info("  - Username: ubuntu / Password: ubuntu")
+                logger.info("  - Username: root / Password: ubuntu")
+                return True
+            else:
+                logger.warning(f"⚠️ Failed to configure credentials: {result.stderr}")
+                
+                # Fallback: método alternativo más robusto
+                logger.info("Trying fallback credential configuration...")
+                return self._configure_vm_credentials_fallback(vm_disk_path, vm_name, server_name)
+                
+        except subprocess.TimeoutExpired:
+            logger.warning("⚠️ Credential configuration timed out")
+            return self._configure_vm_credentials_fallback(vm_disk_path, vm_name, server_name)
+        except Exception as e:
+            logger.warning(f"⚠️ Could not configure VM credentials: {e}")
+            return self._configure_vm_credentials_fallback(vm_disk_path, vm_name, server_name)
+
+    def _configure_vm_credentials_fallback(self, vm_disk_path: str, vm_name: str, server_name: str):
+        """
+        Método de fallback para configurar credenciales usando métodos alternativos
+        """
+        try:
+            logger.info("Attempting fallback credential configuration...")
+            server_ip = self.hypervisors[server_name]['ip']
+            
+            # Método 1: Solo configurar contraseñas básicas
+            simple_cmd = [
+                'ssh', f'ubuntu@{server_ip}',
+                'sudo', 'virt-customize', '-a', vm_disk_path,
+                '--root-password', 'password:ubuntu',
+                '--run-command', 'useradd -m -s /bin/bash ubuntu 2>/dev/null || true',
+                '--password', 'ubuntu:password:ubuntu',
+                '--run-command', 'usermod -aG sudo ubuntu',
+                '--run-command', 'sed -i "s/#*PasswordAuthentication.*/PasswordAuthentication yes/g" /etc/ssh/sshd_config'
+            ]
+            
+            result = subprocess.run(simple_cmd, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0:
+                logger.info("✓ Fallback credential configuration successful")
+                logger.info("  - Username: ubuntu / Password: ubuntu (with sudo group)")
+                logger.info("  - Username: root / Password: ubuntu")
+                return True
+            
+            # Método 2: Usar guestfish si virt-customize falla completamente
+            logger.info("Trying guestfish as final fallback...")
+            return self._configure_vm_credentials_guestfish(vm_disk_path, vm_name, server_name)
+            
+        except Exception as e:
+            logger.error(f"✗ Fallback credential configuration failed: {e}")
+            logger.info("VM will be created without pre-configured credentials")
+            return False
+
+    def _configure_vm_credentials_guestfish(self, vm_disk_path: str, vm_name: str, server_name: str):
+        """
+        Configurar credenciales usando guestfish como último recurso
+        """
+        try:
+            logger.info("Using guestfish for credential configuration...")
+            server_ip = self.hypervisors[server_name]['ip']
+            
+            # Script guestfish
+            guestfish_script = '''
+            run
+            list-filesystems
+            mount /dev/sda1 /
+            mkdir-p /etc/sudoers.d
+            chmod 755 /etc/sudoers.d
+            write /etc/sudoers.d/ubuntu "ubuntu ALL=(ALL) NOPASSWD:ALL"
+            chmod 440 /etc/sudoers.d/ubuntu
+            chown 0 0 /etc/sudoers.d/ubuntu
+            write /etc/shadow "ubuntu:$6$salt$encrypted:19000:0:99999:7:::"
+            write /etc/passwd "ubuntu:x:1000:1000:Ubuntu User:/home/ubuntu:/bin/bash"
+            mkdir-p /home/ubuntu
+            chown 1000 1000 /home/ubuntu
+            '''
+            
+            # Ejecutar guestfish
+            guestfish_cmd = [
+                'ssh', f'ubuntu@{server_ip}',
+                'sudo', 'guestfish', '-a', vm_disk_path, '-i'
+            ]
+            
+            process = subprocess.Popen(guestfish_cmd, 
+                                    stdin=subprocess.PIPE, 
+                                    stdout=subprocess.PIPE, 
+                                    stderr=subprocess.PIPE, 
+                                    text=True)
+            stdout, stderr = process.communicate(input=guestfish_script, timeout=60)
+            
+            if process.returncode == 0:
+                logger.info("✓ Guestfish credential configuration successful")
+                return True
+            else:
+                logger.error(f"✗ Guestfish configuration failed: {stderr}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"✗ Guestfish credential configuration failed: {e}")
+            return False
+
+    def _verify_vm_credentials(self, vm_name: str, server_name: str):
+        """
+        Verificar que las credenciales se configuraron correctamente
+        """
+        try:
+            logger.info(f"Verifying credentials for VM {vm_name}")
+            server_ip = self.hypervisors[server_name]['ip']
+            
+            # Verificar usando guestfish
+            verify_cmd = [
+                'ssh', f'ubuntu@{server_ip}',
+                'sudo', 'guestfish', '-a', f'/home/ubuntu/vm-disks/{vm_name}.qcow2', '-i',
+                'cat', '/etc/passwd'
+            ]
+            
+            result = subprocess.run(verify_cmd, capture_output=True, text=True, timeout=30)
+            
+            if result.returncode == 0 and 'ubuntu' in result.stdout:
+                logger.info("✓ VM credentials verified successfully")
+                return True
+            else:
+                logger.warning("⚠️ Could not verify VM credentials")
+                return False
+                
+        except Exception as e:
+            logger.warning(f"⚠️ Credential verification failed: {e}")
+            return False
+
+
     def _generate_vm_xml(self, vm_config: Dict, disk_path: str, 
                     server_name: str, slice_id: str = None, 
                     networks: List[Dict] = None) -> str:
@@ -2246,12 +2950,191 @@ class LinuxClusterDriver(BaseDriver):
         mac = f"52:54:{hash_value[0:2]}:{hash_value[2:4]}:{hash_value[4:6]}:{hash_value[6:8]}"
         return mac
 
+
+    def _get_auth_token(self) -> Optional[str]:
+        """Obtiene token de autenticación para Network Service"""
+        try:
+            import requests
+            auth_response = requests.post(
+                'http://localhost:5001/login',
+                json={'username': 'testuser', 'password': 'testpass123'},
+                timeout=10
+            )
+            if auth_response.status_code == 200:
+                token = auth_response.json().get('token')
+                logger.info("✓ Token obtenido para Network Service")
+                return token
+            else:
+                logger.warning("No se pudo obtener token para Network Service")
+                return None
+        except Exception as e:
+            logger.warning(f"Error obteniendo token: {e}")
+            return None
+
+    def _execute_ssh_command(self, server_name: str, command: str, timeout: int = 60) -> Dict:
+        """Ejecuta comando SSH sin conflictos de puerto"""
+        if server_name not in self.hypervisors:
+            return {
+                'success': False,
+                'error': f'Unknown server: {server_name}',
+                'output': ''
+            }
+        
+        server_config = self.hypervisors[server_name]
+        server_ip = server_config['ip']
+        
+        try:
+            # SSH directo sin port forwarding problemático
+            ssh_command = [
+                'ssh',
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'UserKnownHostsFile=/dev/null',
+                '-o', 'ConnectTimeout=30',
+                '-o', 'ServerAliveInterval=10',
+                '-o', 'ServerAliveCountMax=3',
+                '-o', 'LogLevel=ERROR',  # Reducir ruido en logs
+                f'ubuntu@{server_ip}',
+                command
+            ]
+            
+            logger.debug(f"Executing on {server_name}: {command}")
+            
+            # Ejecutar con timeout
+            result = subprocess.run(
+                ssh_command,
+                capture_output=True,
+                text=True,
+                timeout=timeout
+            )
+            
+            return {
+                'success': result.returncode == 0,
+                'output': result.stdout.strip(),
+                'error': result.stderr.strip(),
+                'return_code': result.returncode
+            }
+            
+        except subprocess.TimeoutExpired:
+            return {
+                'success': False,
+                'error': f'Command timeout after {timeout}s',
+                'output': ''
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'output': ''
+            }
+    
+    def _create_disk(self, vm_name: str, base_image: str, server_name: str) -> str:
+        """Crea disco de VM con manejo robusto de errores"""
+        try:
+            # Directorio de discos
+            disk_dir = '/home/ubuntu/vm-disks'
+            disk_path = f"{disk_dir}/{vm_name}.qcow2"
+            
+            # 1. Configurar directorio con permisos correctos
+            setup_commands = [
+                f"sudo mkdir -p {disk_dir}",
+                f"sudo chown ubuntu:ubuntu {disk_dir}",
+                f"sudo chmod 755 {disk_dir}"
+            ]
+            
+            for cmd in setup_commands:
+                result = self._execute_ssh_command(server_name, cmd)
+                if not result['success']:
+                    logger.warning(f"Setup command failed: {cmd} - {result['error']}")
+            
+            # 2. Verificar imagen base
+            if base_image in self.available_images:
+                base_path = self.available_images[base_image]['path']
+                
+                # Verificar acceso a imagen base
+                check_result = self._execute_ssh_command(server_name, f"ls -la {base_path}")
+                if not check_result['success']:
+                    raise Exception(f"Base image not accessible: {base_path}")
+                
+                # Crear disco basado en imagen
+                create_cmd = f"qemu-img create -f qcow2 -F qcow2 -b {base_path} {disk_path}"
+            else:
+                logger.warning(f"Unknown base image {base_image}, creating empty disk")
+                create_cmd = f"qemu-img create -f qcow2 {disk_path} 10G"
+            
+            # 3. Crear disco
+            logger.info(f"Creating disk on {server_name}: {create_cmd}")
+            result = self._execute_ssh_command(server_name, create_cmd)
+            
+            if result['success']:
+                # Verificar que se creó
+                verify_result = self._execute_ssh_command(server_name, f"ls -la {disk_path}")
+                if verify_result['success']:
+                    logger.info(f"✓ Disk created successfully: {disk_path}")
+                    return disk_path
+                else:
+                    raise Exception(f"Disk file not found after creation: {disk_path}")
+            else:
+                raise Exception(f"Disk creation failed: {result['error']}")
+                
+        except Exception as e:
+            logger.error(f"Failed to create disk for {vm_name}: {e}")
+            raise
+    
+    def _execute_commands_on_servers(self, commands: List[str], description: str = "commands"):
+        """Ejecuta comandos en todos los servidores del cluster"""
+        results = []
+        errors = []
+        
+        for server_name in self.hypervisors.keys():
+            server_results = []
+            for command in commands:
+                try:
+                    result = self._execute_ssh_command(server_name, command)
+                    server_results.append({
+                        'server': server_name,
+                        'command': command,
+                        'success': result['success'],
+                        'output': result.get('output', ''),
+                        'error': result.get('error', '')
+                    })
+                    
+                    if result['success']:
+                        logger.info(f"✓ {server_name}: {command}")
+                    else:
+                        logger.warning(f"✗ {server_name}: {command} - {result.get('error', 'Unknown error')}")
+                        errors.append(f"{server_name}: {command} failed")
+                        
+                except Exception as e:
+                    error_msg = f"{server_name}: {command} - {str(e)}"
+                    logger.error(f"✗ {error_msg}")
+                    errors.append(error_msg)
+                    server_results.append({
+                        'server': server_name,
+                        'command': command,
+                        'success': False,
+                        'output': '',
+                        'error': str(e)
+                    })
+            
+            results.extend(server_results)
+        
+        if not errors:
+            logger.info(f"Commands executed successfully for {description}")
+        else:
+            logger.warning(f"Some commands failed for {description}: {len(errors)} errors")
+        
+        return {
+            'success': len(errors) == 0,
+            'results': results,
+            'errors': errors
+        }
+
 class NetworkServiceClient:
     """Cliente para interactuar con Network Service"""
     
     def __init__(self, base_url="http://localhost:5004", token=None):
         self.base_url = base_url
-        self.timeout = 30
+        self.timeout = 120
         self.token = token
         self.headers = {'Content-Type': 'application/json'}
         
