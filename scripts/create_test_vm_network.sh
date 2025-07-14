@@ -30,7 +30,6 @@ SLICE_DATA='{
   "description": "Topología de red con múltiples VMs interconectadas según diagrama",
   "infrastructure": "linux",
   "placement_policy": "distributed",
-  "availability_zone": "zone1-linux",
   "nodes": [
     {
       "name": "vm6",

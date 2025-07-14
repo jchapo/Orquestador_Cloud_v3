@@ -168,8 +168,459 @@ class LinuxClusterDriver(BaseDriver):
         }
         
         self.connections = {}  # Cache de conexiones libvirt
+
+        self.ip_pools = {
+            'trunk': {
+                'cidr': '10.60.1.0/24',
+                'gateway': '10.60.1.1',
+                'start': 10,  # 10.60.1.10
+                'end': 200,   # 10.60.1.200
+                'reserved': {}  # {ip: vm_info}
+            },
+            'data': {
+                'cidr': '192.168.100.0/24', 
+                'gateway': '192.168.100.1',
+                'start': 10,
+                'end': 200,
+                'reserved': {}
+            },
+            'provider': {
+                'cidr': '10.60.2.0/24',
+                'gateway': '10.60.2.1', 
+                'start': 10,
+                'end': 200,
+                'reserved': {}
+            }
+        }
     
 
+    def pre_allocate_vm_ip(self, vm_config: Dict, network_type: str, slice_id: str) -> Optional[str]:
+        """
+        Pre-asigna una IP para una VM antes de crearla
+        
+        Args:
+            vm_config: Configuración de la VM
+            network_type: Tipo de red (trunk, data, provider)
+            slice_id: ID del slice
+            
+        Returns:
+            IP asignada o None si no se pudo asignar
+        """
+        try:
+            vm_name = vm_config['name']
+            has_internet = vm_config.get('internet_access', False)
+            
+            logger.info(f"Pre-asignando IP para VM {vm_name} (internet: {has_internet})")
+            
+            if network_type not in self.ip_pools:
+                logger.error(f"Network type {network_type} not supported")
+                return None
+                
+            pool = self.ip_pools[network_type]
+            network = ipaddress.IPv4Network(pool['cidr'])
+            base_ip = str(network.network_address)
+            
+            # Para VMs con internet, asignar IPs bajas (más fáciles de recordar)
+            if has_internet:
+                start_range = pool['start']
+                end_range = min(pool['start'] + 20, pool['end'])
+                logger.info(f"VM {vm_name} con internet - buscando IP en rango {start_range}-{end_range}")
+            else:
+                start_range = pool['start'] + 50  # IPs más altas para VMs sin internet
+                end_range = pool['end']
+                logger.info(f"VM {vm_name} sin internet - buscando IP en rango {start_range}-{end_range}")
+            
+            # Buscar IP disponible
+            for host_part in range(start_range, end_range + 1):
+                candidate_ip = str(network.network_address + host_part)
+                
+                # Verificar que no esté reservada
+                if candidate_ip not in pool['reserved']:
+                    # Verificar que no esté en uso en el sistema
+                    if not self._is_ip_in_use(candidate_ip, network_type):
+                        # Reservar la IP
+                        pool['reserved'][candidate_ip] = {
+                            'vm_name': vm_name,
+                            'slice_id': slice_id,
+                            'internet_access': has_internet,
+                            'assigned_at': datetime.utcnow().isoformat(),
+                            'network_type': network_type
+                        }
+                        
+                        logger.info(f"✅ IP {candidate_ip} pre-asignada a VM {vm_name}")
+                        return candidate_ip
+            
+            logger.error(f"❌ No hay IPs disponibles en pool {network_type} para VM {vm_name}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error pre-asignando IP para VM {vm_name}: {e}")
+            return None
+    
+    def _is_ip_in_use(self, ip: str, network_type: str) -> bool:
+        """Verifica si una IP está en uso en el sistema"""
+        try:
+            # Ping test - si responde está en uso
+            result = subprocess.run(['ping', '-c', '1', '-W', '1', ip], 
+                                  capture_output=True, timeout=3)
+            if result.returncode == 0:
+                logger.debug(f"IP {ip} responde a ping - en uso")
+                return True
+            
+            # Verificar en ARP table
+            arp_result = subprocess.run(['arp', '-n', ip], 
+                                      capture_output=True, text=True)
+            if "no entry" not in arp_result.stdout.lower():
+                logger.debug(f"IP {ip} en ARP table - en uso")  
+                return True
+                
+            # Verificar en DHCP leases
+            dhcp_check = subprocess.run(['grep', '-r', ip, '/var/lib/dhcp/'], 
+                                      capture_output=True, text=True)
+            if dhcp_check.returncode == 0:
+                logger.debug(f"IP {ip} en DHCP leases - en uso")
+                return True
+                
+            return False
+            
+        except Exception as e:
+            logger.warning(f"Error verificando IP {ip}: {e}")
+            return False  # En caso de error, asumir disponible
+
+    def create_vm_with_fixed_ip(self, vm_config: Dict, server_name: str, 
+                               slice_id: str, networks: List[Dict]) -> Dict:
+        """
+        Crea VM con IP pre-asignada
+        """
+        try:
+            vm_name = vm_config['name'] 
+            has_internet = vm_config.get('internet_access', False)
+            
+            logger.info(f"Creando VM {vm_name} con IP fija (internet: {has_internet})")
+            
+            # 1. Determinar tipo de red principal
+            main_network_type = 'trunk' if has_internet else 'data'
+            for network in networks:
+                if network.get('internet_access') == has_internet:
+                    main_network_type = network.get('type', main_network_type)
+                    break
+            
+            # 2. Pre-asignar IP
+            assigned_ip = self.pre_allocate_vm_ip(vm_config, main_network_type, slice_id)
+            if not assigned_ip:
+                raise Exception(f"No se pudo pre-asignar IP para VM {vm_name}")
+            
+            # 3. Configurar DHCP reservation ANTES de crear la VM
+            mac_address = self._generate_mac_address(vm_name)
+            self._configure_dhcp_reservation(assigned_ip, mac_address, vm_name, main_network_type)
+            
+            # 4. Actualizar configuración de VM con IP y MAC fijas
+            enhanced_vm_config = vm_config.copy()
+            enhanced_vm_config['fixed_ip'] = assigned_ip
+            enhanced_vm_config['mac_address'] = mac_address
+            enhanced_vm_config['network_type'] = main_network_type
+            
+            # 5. Crear VM con configuración mejorada
+            vm_result = self.create_vm(enhanced_vm_config, server_name, slice_id, networks)
+            
+            # 6. Verificar que obtuvo la IP correcta
+            actual_ip = self._verify_vm_ip(vm_name, server_name, assigned_ip)
+            if actual_ip == assigned_ip:
+                logger.info(f"✅ VM {vm_name} creada con IP fija {assigned_ip}")
+                vm_result['ip_address'] = assigned_ip
+                vm_result['ip_assignment'] = 'fixed'
+            else:
+                logger.warning(f"⚠️ VM {vm_name} obtuvo IP {actual_ip} en lugar de {assigned_ip}")
+                vm_result['ip_address'] = actual_ip
+                vm_result['ip_assignment'] = 'dynamic'
+            
+            # 7. Configurar acceso desde exterior si tiene internet
+            if has_internet:
+                external_port = self._configure_external_access(vm_name, assigned_ip, server_name)
+                if external_port:
+                    vm_result['external_ssh_port'] = external_port
+                    vm_result['external_access'] = f"ssh ubuntu@{self.hypervisors[server_name]['ip']} -p {external_port}"
+            
+            return vm_result
+            
+        except Exception as e:
+            # Cleanup en caso de error
+            if 'assigned_ip' in locals():
+                self._release_ip(assigned_ip, main_network_type)
+            logger.error(f"Error creando VM {vm_name} con IP fija: {e}")
+            raise
+
+    def _generate_mac_address(self, vm_name: str) -> str:
+        """Genera MAC address determinística para una VM"""
+        # Usar hash del nombre para generar MAC consistente
+        import hashlib
+        hash_obj = hashlib.md5(vm_name.encode())
+        hash_hex = hash_obj.hexdigest()
+        
+        # Construir MAC con prefijo VMware OUI + hash
+        mac = f"52:54:00:{hash_hex[0:2]}:{hash_hex[2:4]}:{hash_hex[4:6]}"
+        logger.debug(f"Generated MAC for {vm_name}: {mac}")
+        return mac
+
+    def _configure_dhcp_reservation(self, ip: str, mac: str, vm_name: str, network_type: str):
+        """Configura reservación DHCP para la VM"""
+        try:
+            pool = self.ip_pools[network_type]
+            gateway = pool['gateway']
+            cidr = pool['cidr']
+            
+            # Determinar interface de red
+            if network_type == 'trunk':
+                interface = 'vlan101'  # Basado en tu configuración actual
+            elif network_type == 'data':
+                interface = 'vlan102'
+            else:
+                interface = f'vlan{network_type}'
+            
+            # Crear configuración DHCP específica
+            dhcp_config = f"""
+# DHCP config for {vm_name}
+subnet {ipaddress.IPv4Network(cidr).network_address} netmask {ipaddress.IPv4Network(cidr).netmask} {{
+    range {ip} {ip};
+    option routers {gateway};
+    option domain-name-servers 8.8.8.8, 1.1.1.1;
+    option broadcast-address {ipaddress.IPv4Network(cidr).broadcast_address};
+    default-lease-time 86400;
+    max-lease-time 172800;
+    
+    host {vm_name} {{
+        hardware ethernet {mac};
+        fixed-address {ip};
+        option host-name "{vm_name}";
+    }}
+}}
+"""
+            
+            # Aplicar configuración en el servidor principal
+            commands = [
+                f"sudo mkdir -p /etc/dhcp/reservations",
+                f"sudo tee /etc/dhcp/reservations/{vm_name}.conf > /dev/null << 'EOF'\n{dhcp_config}\nEOF",
+                f"sudo systemctl restart isc-dhcp-server || sudo dhcpd -cf /etc/dhcp/reservations/{vm_name}.conf -pf /var/run/dhcpd-{vm_name}.pid {interface} &"
+            ]
+            
+            for server_name in ['server1']:  # Configurar en servidor principal
+                server_ip = self.hypervisors[server_name]['ip']
+                for cmd in commands:
+                    ssh_cmd = ['ssh', f'ubuntu@{server_ip}', cmd]
+                    try:
+                        subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"DHCP config command failed: {cmd} - {e.stderr}")
+            
+            logger.info(f"✅ DHCP reservation configured: {vm_name} -> {ip} ({mac})")
+            
+        except Exception as e:
+            logger.error(f"Error configuring DHCP reservation: {e}")
+            raise
+
+    def _verify_vm_ip(self, vm_name: str, server_name: str, expected_ip: str, timeout: int = 60) -> Optional[str]:
+        """Verifica que la VM obtuvo la IP esperada"""
+        try:
+            import time
+            
+            conn = self.get_connection(server_name)
+            domain = conn.lookupByName(vm_name)
+            
+            # Esperar hasta que la VM obtenga IP
+            for attempt in range(timeout):
+                time.sleep(1)
+                
+                # Método 1: libvirt
+                try:
+                    result = subprocess.run(['ssh', f'ubuntu@{self.hypervisors[server_name]["ip"]}', 
+                                           f'virsh domifaddr {vm_name}'], 
+                                          capture_output=True, text=True, timeout=10)
+                    if expected_ip in result.stdout:
+                        logger.info(f"✅ VM {vm_name} confirmed with IP {expected_ip}")
+                        return expected_ip
+                except:
+                    pass
+                
+                # Método 2: ping test
+                try:
+                    ping_result = subprocess.run(['ping', '-c', '1', '-W', '1', expected_ip], 
+                                               capture_output=True, timeout=3)
+                    if ping_result.returncode == 0:
+                        logger.info(f"✅ VM {vm_name} responding at {expected_ip}")
+                        return expected_ip
+                except:
+                    pass
+                
+                if attempt % 10 == 0:
+                    logger.debug(f"Waiting for VM {vm_name} to get IP {expected_ip} (attempt {attempt+1}/{timeout})")
+            
+            logger.warning(f"⚠️ VM {vm_name} did not get expected IP {expected_ip} within {timeout}s")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error verifying VM IP: {e}")
+            return None
+
+    def _configure_external_access(self, vm_name: str, vm_ip: str, server_name: str) -> Optional[int]:
+        """Configura acceso externo para VM con internet"""
+        try:
+            # Generar puerto único basado en VM
+            import hashlib
+            port_hash = int(hashlib.md5(vm_name.encode()).hexdigest()[:4], 16)
+            external_port = 2200 + (port_hash % 800)  # Rango 2200-2999
+            
+            server_ip = self.hypervisors[server_name]['ip']
+            
+            # Configurar port forwarding
+            port_forward_commands = [
+                # SSH access
+                f"sudo iptables -t nat -A PREROUTING -p tcp --dport {external_port} -j DNAT --to-destination {vm_ip}:22",
+                f"sudo iptables -A FORWARD -p tcp -d {vm_ip} --dport 22 -j ACCEPT",
+                
+                # HTTP access (puerto 8080 externo -> 80 interno)
+                f"sudo iptables -t nat -A PREROUTING -p tcp --dport {external_port + 100} -j DNAT --to-destination {vm_ip}:80",
+                f"sudo iptables -A FORWARD -p tcp -d {vm_ip} --dport 80 -j ACCEPT"
+            ]
+            
+            for cmd in port_forward_commands:
+                ssh_cmd = ['ssh', f'ubuntu@{server_ip}', cmd]
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                except subprocess.CalledProcessError as e:
+                    logger.warning(f"Port forward command failed: {cmd} - {e.stderr}")
+            
+            logger.info(f"✅ External access configured for {vm_name}:")
+            logger.info(f"   SSH: ssh ubuntu@{server_ip} -p {external_port}")
+            logger.info(f"   HTTP: http://{server_ip}:{external_port + 100}")
+            
+            return external_port
+            
+        except Exception as e:
+            logger.error(f"Error configuring external access: {e}")
+            return None
+
+    def _release_ip(self, ip: str, network_type: str):
+        """Libera una IP del pool"""
+        try:
+            if network_type in self.ip_pools and ip in self.ip_pools[network_type]['reserved']:
+                del self.ip_pools[network_type]['reserved'][ip]
+                logger.info(f"✅ IP {ip} released from {network_type} pool")
+        except Exception as e:
+            logger.error(f"Error releasing IP {ip}: {e}")
+
+    def deploy_slice_enhanced(self, slice_config: Dict, placement: Dict) -> Dict:
+        """
+        Deploy slice con pre-asignación de IPs
+        """
+        deployed_vms = []
+        created_networks = []
+        errors = []
+        ip_assignments = {}
+        
+        slice_id = slice_config.get('id', str(uuid.uuid4()))
+        
+        try:
+            logger.info(f"🚀 Deploying slice {slice_id} with IP pre-assignment")
+            
+            # 1. Configurar redes primero
+            network_result = self.setup_slice_networks(slice_config, slice_id)
+            if not network_result['success']:
+                errors.extend(network_result['errors'])
+            created_networks = network_result['created_networks']
+            
+            # 2. Pre-asignar IPs para TODAS las VMs antes de crear cualquiera
+            logger.info("📋 Pre-asignando IPs para todas las VMs...")
+            for vm_config in slice_config.get('nodes', []):
+                vm_name = vm_config['name']
+                has_internet = vm_config.get('internet_access', False)
+                network_type = 'trunk' if has_internet else 'data'
+                
+                pre_assigned_ip = self.pre_allocate_vm_ip(vm_config, network_type, slice_id)
+                if pre_assigned_ip:
+                    ip_assignments[vm_name] = {
+                        'ip': pre_assigned_ip,
+                        'network_type': network_type,
+                        'has_internet': has_internet
+                    }
+                    logger.info(f"📍 {vm_name}: {pre_assigned_ip} ({network_type})")
+                else:
+                    error_msg = f"Failed to pre-assign IP for VM {vm_name}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+            
+            # 3. Crear VMs con IPs pre-asignadas
+            logger.info("🔨 Creando VMs con IPs fijas...")
+            for vm_config in slice_config.get('nodes', []):
+                vm_name = vm_config['name']
+                
+                if vm_name not in placement:
+                    error_msg = f"No placement found for VM {vm_name}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    continue
+                
+                if vm_name not in ip_assignments:
+                    error_msg = f"No IP pre-assigned for VM {vm_name}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    continue
+                
+                server_assignment = placement[vm_name]
+                server_name = server_assignment['hostname']
+                ip_info = ip_assignments[vm_name]
+                
+                try:
+                    # Usar el método mejorado con IP fija
+                    vm_result = self.create_vm_with_fixed_ip(
+                        vm_config, server_name, slice_id, created_networks
+                    )
+                    
+                    # Añadir información de IP
+                    vm_result['pre_assigned_ip'] = ip_info['ip']
+                    vm_result['network_type'] = ip_info['network_type']
+                    vm_result['has_internet'] = ip_info['has_internet']
+                    
+                    deployed_vms.append(vm_result)
+                    logger.info(f"✅ VM {vm_name} deployed with fixed IP {ip_info['ip']}")
+                    
+                except Exception as e:
+                    error_msg = f"Failed to deploy VM {vm_name}: {e}"
+                    logger.error(error_msg)
+                    errors.append(error_msg)
+                    
+                    # Liberar IP en caso de error
+                    self._release_ip(ip_info['ip'], ip_info['network_type'])
+            
+            return {
+                'slice_id': slice_id,
+                'status': 'success' if not errors else 'partial',
+                'deployed_vms': deployed_vms,
+                'created_networks': created_networks,
+                'ip_assignments': ip_assignments,
+                'errors': errors,
+                'enhancement_summary': {
+                    'pre_assigned_ips': len(ip_assignments),
+                    'successful_deployments': len(deployed_vms),
+                    'internet_enabled_vms': len([vm for vm in deployed_vms if vm.get('has_internet')]),
+                    'fixed_ip_assignments': len([vm for vm in deployed_vms if vm.get('ip_assignment') == 'fixed'])
+                }
+            }
+            
+        except Exception as e:
+            logger.error(f"Critical error in enhanced deployment: {e}")
+            
+            # Cleanup IPs en caso de error crítico
+            for vm_name, ip_info in ip_assignments.items():
+                self._release_ip(ip_info['ip'], ip_info['network_type'])
+            
+            return {
+                'slice_id': slice_id,
+                'status': 'failed',
+                'error': str(e),
+                'deployed_vms': deployed_vms,
+                'created_networks': created_networks
+            }
+    
     def _get_service_token(self):
         """Obtiene token de autenticación para comunicación entre servicios"""
         try:

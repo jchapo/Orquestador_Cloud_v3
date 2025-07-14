@@ -39,7 +39,7 @@ app.config['RESOURCE_MANAGER_URL'] = os.getenv('RESOURCE_MANAGER_URL', 'http://l
 
 # VM Flavors disponibles
 VM_FLAVORS = {
-    'nano': {'vcpus': 1, 'ram': 512, 'disk': 1},
+    'nano': {'vcpus': 1, 'ram': 512, 'disk': 2.5},
     'micro': {'vcpus': 1, 'ram': 1024, 'disk': 5},
     'small': {'vcpus': 1, 'ram': 1536, 'disk': 10},
     'medium': {'vcpus': 2, 'ram': 2560, 'disk': 20},
