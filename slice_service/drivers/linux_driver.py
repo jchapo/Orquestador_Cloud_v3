@@ -1094,6 +1094,16 @@ class LinuxClusterDriver(BaseDriver):
                 errors.extend(network_result['errors'])
             created_networks = network_result['created_networks']
             
+            # NUEVO: Extraer mapeo de VLANs para cleanup futuro
+            vlan_mapping = {}
+            for network in created_networks:
+                if network.get('vlan_id'):
+                    vlan_mapping[network['name']] = {
+                        'vlan_id': network['vlan_id'],
+                        'network_type': network.get('type', 'data'),
+                        'bridge': network.get('bridge', 'ovs1')
+                    }
+            
             # 2. Crear VMs con configuración de red R5
             for vm_config in slice_config.get('nodes', []):
                 vm_name = vm_config['name']
@@ -1147,6 +1157,7 @@ class LinuxClusterDriver(BaseDriver):
                 'status': 'success' if not errors else 'partial',
                 'deployed_vms': deployed_vms,
                 'created_networks': created_networks,
+                'vlan_mapping': vlan_mapping,
                 'errors': errors,
                 'r5_summary': {
                     'total_vms': len(slice_config.get('nodes', [])),
@@ -1155,7 +1166,8 @@ class LinuxClusterDriver(BaseDriver):
                     'created_networks': len(created_networks),
                     'network_types': list(set([n.get('type', 'data') for n in created_networks])),
                     'internet_enabled_vms': len([vm for vm in slice_config.get('nodes', []) if vm.get('internet_access')]),
-                    'deployment_time': datetime.utcnow().isoformat()
+                    'deployment_time': datetime.utcnow().isoformat(),
+                    'vlans_allocated': list(vlan_mapping.values())
                 }
             }
             
@@ -1230,13 +1242,31 @@ class LinuxClusterDriver(BaseDriver):
             logger.error(f"Error setting up routing rule: {e}")
             raise
     
-    def destroy_slice(self, slice_id: str, vm_list: List[Dict]) -> Dict:
-        """Elimina un slice completo con cleanup de Network Service"""
+    def destroy_slice(self, slice_id: str, vm_list: List[Dict], deployment_data: Dict = None) -> Dict:
+        """Elimina un slice completo con cleanup preciso de VLANs"""
         deleted_vms = []
         errors = []
         
         try:
-            logger.info(f"Destroying slice {slice_id} with Network Service integration")
+            logger.info(f"Destroying slice {slice_id} with precise VLAN cleanup")
+            
+            # NUEVO: Extraer información de VLANs del deployment_data
+            vlan_mapping = {}
+            if deployment_data:
+                # Opción 1: Si viene en deployment_data directamente
+                vlan_mapping = deployment_data.get('vlan_mapping', {})
+                
+                # Opción 2: Si viene en created_networks
+                if not vlan_mapping and 'created_networks' in deployment_data:
+                    for network in deployment_data['created_networks']:
+                        if network.get('vlan_id'):
+                            vlan_mapping[network['name']] = {
+                                'vlan_id': network['vlan_id'],
+                                'network_type': network.get('type', 'data'),
+                                'bridge': network.get('bridge', 'ovs1')
+                            }
+            
+            logger.info(f"Found {len(vlan_mapping)} VLANs to cleanup: {list(vlan_mapping.keys()) if vlan_mapping else 'None'}")
             
             # 1. Eliminar VMs primero
             for vm_info in vm_list:
@@ -1260,7 +1290,25 @@ class LinuxClusterDriver(BaseDriver):
                     logger.error(error_msg)
                     errors.append(error_msg)
             
-            # 2. Cleanup de redes usando Network Service
+            # 2. MEJORADO: Cleanup preciso de OVS usando VLAN mapping
+            ovs_cleanup_success = False
+            try:
+                if vlan_mapping:
+                    logger.info(f"Using precise VLAN cleanup for {len(vlan_mapping)} VLANs")
+                    self._cleanup_slice_vlans_precise(slice_id, vlan_mapping)
+                    ovs_cleanup_success = True
+                else:
+                    logger.warning(f"No VLAN mapping available, using fallback cleanup")
+                    self._cleanup_slice_ovs_config_fallback(slice_id)
+                    ovs_cleanup_success = True
+                    
+            except Exception as e:
+                error_msg = f"OVS cleanup error: {e}"
+                logger.error(error_msg)
+                errors.append(error_msg)
+            
+            # 3. Cleanup de redes usando Network Service
+            vlan_release_success = False
             try:
                 vlan_release_success = self.network_client.release_slice_vlans(slice_id)
                 if vlan_release_success:
@@ -1273,17 +1321,17 @@ class LinuxClusterDriver(BaseDriver):
                 logger.error(error_msg)
                 errors.append(error_msg)
             
-            # 3. Cleanup local OVS configuration
-            try:
-                self._cleanup_slice_ovs_config(slice_id)
-            except Exception as e:
-                error_msg = f"OVS cleanup error: {e}"
-                logger.error(error_msg)
-                errors.append(error_msg)
-            
             # 4. Cleanup routing rules
+            routing_cleanup_success = False
             try:
-                self._cleanup_slice_routing(slice_id)
+                if vlan_mapping:
+                    # Cleanup específico por VLAN
+                    self._cleanup_slice_routing_precise(slice_id, vlan_mapping)
+                else:
+                    # Cleanup general
+                    self._cleanup_slice_routing(slice_id)
+                routing_cleanup_success = True
+                
             except Exception as e:
                 error_msg = f"Routing cleanup error: {e}"
                 logger.error(error_msg)
@@ -1296,9 +1344,12 @@ class LinuxClusterDriver(BaseDriver):
                 'errors': errors,
                 'cleanup_summary': {
                     'vms_deleted': len(deleted_vms),
+                    'vlans_cleaned': len(vlan_mapping),
                     'vlans_released': vlan_release_success,
-                    'ovs_cleaned': True,
-                    'routing_cleaned': True
+                    'ovs_cleaned': ovs_cleanup_success,
+                    'routing_cleaned': routing_cleanup_success,
+                    'cleanup_method': 'precise' if vlan_mapping else 'fallback',
+                    'networks_found': list(vlan_mapping.keys()) if vlan_mapping else []
                 }
             }
             
@@ -1310,6 +1361,123 @@ class LinuxClusterDriver(BaseDriver):
                 'error': str(e),
                 'deleted_vms': deleted_vms
             }
+
+    def _cleanup_slice_vlans_precise(self, slice_id: str, vlan_mapping: Dict):
+        """Cleanup preciso usando mapeo de VLANs específicas"""
+        try:
+            cleanup_commands = []
+            
+            # Cleanup específico para cada VLAN del slice
+            for network_name, vlan_info in vlan_mapping.items():
+                vlan_id = vlan_info['vlan_id']
+                bridge = vlan_info.get('bridge', 'ovs1')
+                network_type = vlan_info.get('network_type', 'data')
+                
+                logger.info(f"Cleaning VLAN {vlan_id} ({network_type}) for network {network_name}")
+                
+                # Eliminar puertos VLAN específicos
+                cleanup_commands.extend([
+                    f"ovs-vsctl del-port {bridge} vlan{vlan_id} 2>/dev/null || true",
+                    f"ovs-vsctl del-port {bridge} gw-vlan{vlan_id} 2>/dev/null || true",
+                    
+                    # Eliminar interfaces del sistema
+                    f"ip link delete vlan{vlan_id} 2>/dev/null || true",
+                    f"ip link delete gw-vlan{vlan_id} 2>/dev/null || true",
+                    
+                    # Limpiar flows de OpenFlow específicos
+                    f"ovs-ofctl del-flows {bridge} 'dl_vlan={vlan_id}' 2>/dev/null || true",
+                    
+                    # Limpiar reglas de routing específicas
+                    f"ip route del table {200 + vlan_id} 2>/dev/null || true",
+                    f"ip rule del table {200 + vlan_id} 2>/dev/null || true",
+                    
+                    # Limpiar reglas iptables específicas de la VLAN
+                    f"iptables -t nat -D POSTROUTING -s 10.60.1.0/24 -o ens3 -j MASQUERADE 2>/dev/null || true",
+                    f"iptables -D FORWARD -i vlan{vlan_id} -j ACCEPT 2>/dev/null || true",
+                    f"iptables -D FORWARD -o vlan{vlan_id} -j ACCEPT 2>/dev/null || true"
+                ])
+            
+            # Cleanup general del slice (interfaces con nombres de slice)
+            slice_short_id = slice_id[-8:]
+            cleanup_commands.extend([
+                f"for port in $(ovs-vsctl list-ports ovs1 | grep -E '{slice_short_id}'); do ovs-vsctl del-port ovs1 $port 2>/dev/null || true; done",
+                f"ovs-ofctl del-flows ovs1 'cookie={slice_id}/-1' 2>/dev/null || true"
+            ])
+            
+            # Ejecutar comandos en todos los servidores
+            self._execute_ovs_commands(cleanup_commands, f"precise cleanup for slice {slice_id}")
+            
+            logger.info(f"✓ Precise VLAN cleanup completed for slice {slice_id}: cleaned {len(vlan_mapping)} VLANs")
+            
+        except Exception as e:
+            logger.error(f"Error in precise VLAN cleanup: {e}")
+            raise
+
+    def _cleanup_slice_ovs_config_fallback(self, slice_id: str):
+        """Cleanup fallback cuando no hay información específica de VLANs"""
+        try:
+            logger.info(f"Using fallback cleanup method for slice {slice_id}")
+            
+            slice_short_id = slice_id[-8:]
+            
+            cleanup_commands = [
+                # Buscar puertos con el ID del slice
+                f"for port in $(ovs-vsctl list-ports ovs1 | grep -E '{slice_short_id}|{slice_id}'); do ovs-vsctl del-port ovs1 $port 2>/dev/null || true; done",
+                
+                # Limpiar flows del slice
+                f"ovs-ofctl del-flows ovs1 'cookie={slice_id}/-1' 2>/dev/null || true",
+                
+                # Intentar limpiar interfaces del sistema
+                f"for iface in $(ip link show | grep -E '{slice_short_id}|{slice_id}' | cut -d: -f2 | tr -d ' '); do ip link delete $iface 2>/dev/null || true; done"
+            ]
+            
+            self._execute_ovs_commands(cleanup_commands, f"fallback cleanup for slice {slice_id}")
+            
+            logger.info(f"✓ Fallback cleanup completed for slice {slice_id}")
+            
+        except Exception as e:
+            logger.error(f"Error in fallback cleanup: {e}")
+            raise
+
+    def _cleanup_slice_routing_precise(self, slice_id: str, vlan_mapping: Dict):
+        """Cleanup preciso de routing usando información específica de VLANs"""
+        try:
+            routing_cleanup_commands = []
+            
+            for network_name, vlan_info in vlan_mapping.items():
+                vlan_id = vlan_info['vlan_id']
+                network_type = vlan_info.get('network_type', 'data')
+                
+                # Cleanup específico según el tipo de red
+                if network_type in ['trunk', 'provider']:
+                    # Redes con acceso a internet
+                    routing_cleanup_commands.extend([
+                        f"ip route del 10.60.1.0/24 table {200 + vlan_id} 2>/dev/null || true",
+                        f"ip rule del from 10.60.1.0/24 table {200 + vlan_id} priority {200 + vlan_id} 2>/dev/null || true",
+                        f"iptables -t nat -D POSTROUTING -s 10.60.1.0/24 -o ens3 -j MASQUERADE 2>/dev/null || true"
+                    ])
+            
+            # Cleanup general del slice
+            routing_cleanup_commands.extend([
+                f"iptables-save | grep -v '{slice_id}' | iptables-restore 2>/dev/null || true"
+            ])
+            
+            # Ejecutar en el servidor gateway
+            gateway_server = self._get_internet_gateway_server()
+            server_ip = self.hypervisors[gateway_server]['ip']
+            
+            for cmd in routing_cleanup_commands:
+                ssh_cmd = ['ssh', f'ubuntu@{server_ip}', f'sudo bash -c "{cmd}"']
+                try:
+                    subprocess.run(ssh_cmd, check=True, capture_output=True, timeout=30)
+                except subprocess.CalledProcessError:
+                    pass  # Esperado si la regla no existe
+            
+            logger.info(f"✓ Precise routing cleanup completed for slice {slice_id}")
+            
+        except Exception as e:
+            logger.error(f"Error in precise routing cleanup: {e}")
+            raise
 
     def _cleanup_slice_ovs_config(self, slice_id: str):
         """Limpia configuración OVS específica del slice"""

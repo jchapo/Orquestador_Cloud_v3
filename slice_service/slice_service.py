@@ -552,11 +552,32 @@ class VMPlacementEngine:
                         best_server = server
             
             if best_server:
+                # ========== AQUÍ ESTÁ EL PROBLEMA ==========
+                # ANTES (INCORRECTO):
+                # placement[node['node_name']] = {
+                #     'server_id': best_server['id'],
+                #     'hostname': best_server['hostname'],  # ← Esto devuelve 'pucp-server2'
+                #     'zone': best_server['zone']
+                # }
+                
+                # DESPUÉS (CORRECTO):
+                # Mapear hostname de BD a clave de hypervisors
+                hostname_mapping = {
+                    'pucp-server1': 'server1',
+                    'pucp-server2': 'server2',
+                    'pucp-server3': 'server3', 
+                    'pucp-server4': 'server4'
+                }
+                
+                db_hostname = best_server['hostname']  # 'pucp-server2' de la BD
+                driver_hostname = hostname_mapping.get(db_hostname, db_hostname)  # 'server2' para driver
+                
                 placement[node['node_name']] = {
                     'server_id': best_server['id'],
-                    'hostname': best_server['hostname'],
+                    'hostname': driver_hostname,  # ← Ahora devuelve 'server2' 
                     'zone': best_server['zone']
                 }
+                # ==========================================
                 
                 # Actualizar recursos disponibles del servidor
                 best_server['available_vcpus'] -= node['vcpus']
@@ -573,6 +594,13 @@ class VMPlacementEngine:
     def _consolidated_placement(self, nodes: List[Dict], servers: List[Dict]) -> Dict[str, Any]:
         """Colocación consolidada - minimiza número de servidores usados"""
         placement = {}
+
+        hostname_mapping = {
+            'pucp-server1': 'server1',
+            'pucp-server2': 'server2',
+            'pucp-server3': 'server3', 
+            'pucp-server4': 'server4'
+        }
         
         # Ordenar nodos por recursos requeridos (mayor a menor)
         nodes_sorted = sorted(nodes, key=lambda x: x['vcpus'] + x['ram'] + x['disk'], reverse=True)
@@ -594,9 +622,12 @@ class VMPlacementEngine:
                             break
             
             if best_server:
+                db_hostname = best_server['hostname']
+                driver_hostname = hostname_mapping.get(db_hostname, db_hostname)
+                
                 placement[node['node_name']] = {
                     'server_id': best_server['id'],
-                    'hostname': best_server['hostname'],
+                    'hostname': driver_hostname,  # ← CORREGIDO
                     'zone': best_server['zone']
                 }
                 
@@ -615,6 +646,14 @@ class VMPlacementEngine:
         """Colocación distribuida - maximiza disponibilidad"""
         placement = {}
         server_index = 0
+
+        # Mapeo de hostnames
+        hostname_mapping = {
+            'pucp-server1': 'server1',
+            'pucp-server2': 'server2',
+            'pucp-server3': 'server3', 
+            'pucp-server4': 'server4'
+        }
         
         for node in nodes:
             placed = False
@@ -627,6 +666,9 @@ class VMPlacementEngine:
                     server['available_ram'] >= node['ram'] and
                     server['available_disk'] >= node['disk']):
                     
+                    db_hostname = server['hostname']
+                    driver_hostname = hostname_mapping.get(db_hostname, db_hostname)
+                                    
                     placement[node['node_name']] = {
                         'server_id': server['id'],
                         'hostname': server['hostname'],

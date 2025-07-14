@@ -1,7 +1,7 @@
 {
   "detection_timestamp": "2025-06-25 01:11:09",
   "servers": {
-    "pucp-server1": {
+    "server1": {
       "status": "online",
       "hostname": "server1",
       "cpu_cores": 4,
@@ -19,7 +19,7 @@
       "virtualization": "physical",
       "detected_at": "2025-06-25 01:11:11"
     },
-    "pucp-server2": {
+    "server2": {
       "status": "online",
       "hostname": "server2",
       "cpu_cores": 4,
@@ -37,7 +37,7 @@
       "virtualization": "physical",
       "detected_at": "2025-06-25 01:11:13"
     },
-    "pucp-server3": {
+    "server3": {
       "status": "online",
       "hostname": "server3",
       "cpu_cores": 4,
@@ -55,7 +55,7 @@
       "virtualization": "physical",
       "detected_at": "2025-06-25 01:11:14"
     },
-    "pucp-server4": {
+    "server4": {
       "status": "online",
       "hostname": "server4",
       "cpu_cores": 4,
