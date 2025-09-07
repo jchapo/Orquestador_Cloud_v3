@@ -6,6 +6,8 @@
 
 **Orquestador Cloud v3** es una plataforma robusta desarrollada en Python para la orquestación de recursos y servicios en entornos de cómputo distribuido (clúster Linux, OpenStack). La arquitectura basada en microservicios incluye un API Gateway centralizado y servicios especializados para autenticación, gestión de imágenes, networking, plantillas y slices.
 
+<img width="924" height="575" alt="Screenshot from 2025-09-07 01-17-33" src="https://github.com/user-attachments/assets/c3cfbb02-6563-4bf5-b655-0e5f58f0227e" />
+
 ## ✨ Características principales
 
 - 🚀 **API Gateway unificado** con endpoints RESTful
@@ -169,6 +171,8 @@ curl -X POST http://localhost:8000/auth/login \
 ```
 
 ### CLI (pucp-cli)
+
+<img width="924" height="575" alt="Screenshot from 2025-09-07 01-17-56" src="https://github.com/user-attachments/assets/fed3e121-40a1-4685-a14d-730d4c2a868e" />
 
 ```bash
 # Listar slices disponibles
